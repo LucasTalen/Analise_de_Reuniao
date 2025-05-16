@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análise de Vídeos com IA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding-top: 20px;
+        }
+        .timestamp {
+            cursor: pointer;
+            color: #1e88e5;
+            font-weight: bold;
+            text-decoration: underline;
+            transition: background-color 0.2s, color 0.2s;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+        .timestamp:hover {
+            color: #0d47a1;
+            background-color: #e3f2fd;
+        }
+        .insights-container {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #1e88e5;
+            margin-bottom: 20px;
+        }
+        .tab-content {
+            padding: 20px 0;
+        }
+        #video-container {
+            position: sticky;
+            top: 20px;
+        }
+        .progress-container {
+            margin: 30px 0;
+        }
+        .hidden {
+            display: none;
+        }
+        #results-container {
+            margin-top: 30px;
+        }
+        #insights-content {
+            line-height: 1.6;
+            text-align: justify;
+        }
+        #insights-content h1, 
+        #insights-content h2, 
+        #insights-content h3, 
+        #insights-content h4 {
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+        #insights-content ul, 
+        #insights-content ol {
+            padding-left: 2em;
+            margin-bottom: 1em;
+        }
+        #insights-content p {
+            margin-bottom: 1em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">🎬 Análise de Vídeos com Inteligência Artificial</h1>
+        <p class="text-center mb-5">Faça upload de um vídeo e, se quiser, já envie uma pergunta para obter insights detalhados.</p>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div id="upload-container">
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">📤 Upload de Vídeo</h5>
+                            <form id="upload-form" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label for="video-file" class="form-label">Escolha um arquivo de vídeo</label>
+                                    <input class="form-control" type="file" id="video-file" accept=".mp4,.avi,.mov,.mkv" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="question" class="form-label">💬 Digite uma pergunta sobre o vídeo (opcional)</label>
+                                    <input type="text" class="form-control" id="question" name="question" placeholder="Ex: Quais são os pontos-chave discutidos?">
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100">🔍 Enviar Vídeo</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                <div id="video-container" class="mt-4 hidden">
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">📽️ Vídeo Carregado</h5>
+                            <video id="video-player" width="100%" controls>
+                                Seu navegador não suporta a tag de vídeo.
+                            </video>
+                            <button id="analyze-btn" class="btn btn-success mt-3 w-100">Analisar Vídeo</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div id="analysis-container">
+                    <div class="progress-container hidden">
+                        <h5>⚙️ Analisando o vídeo...</h5>
+                        <div class="progress">
+                            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <p id="progress-text" class="mt-2">Iniciando análise...</p>
+                    </div>
+                    <div id="results-container" class="hidden">
+                        <ul class="nav nav-tabs" id="myTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="insights-tab" data-bs-toggle="tab" data-bs-target="#insights" type="button" role="tab">📊 Insights</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="transcription-tab" data-bs-toggle="tab" data-bs-target="#transcription" type="button" role="tab">📝 Transcrição</button>
+                            </li>
+                        </ul>
+                        <div class="tab-content" id="myTabContent">
+                            <div class="tab-pane fade show active" id="insights" role="tabpanel">
+                                <div class="insights-container">
+                                    <p style="color:#1E88E5; font-size:0.9em;">
+                                        ✨ Os timestamps no texto abaixo são clicáveis e levarão você diretamente ao momento do vídeo!
+                                    </p>
+                                    <div id="insights-content">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="transcription" role="tabpanel">
+                                <div id="transcription-content">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="mt-5">
+            <div class="accordion" id="helpAccordion">
+                <div class="accordion-item">
+                    <h2 class="accordion-header" id="headingOne">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne">
+                            ℹ️ Como usar esta aplicação
+                        </button>
+                    </h2>
+                    <div id="collapseOne" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                        <div class="accordion-body">
+                            <ol>
+                                <li>Faça upload de um arquivo de vídeo.</li>
+                                <li>Digite uma pergunta (opcional).</li>
+                                <li>Clique em "Analisar Vídeo".</li>
+                                <li>Aguarde enquanto o sistema transcreve o vídeo e gera insights.</li>
+                                <li>Visualize os insights e a transcrição.</li>
+                                <li>Clique nos timestamps exibidos no texto para navegar para momentos específicos no vídeo.</li>
+                                <li>Para analisar outro vídeo, recarregue a página.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const uploadForm = document.getElementById('upload-form');
+            const videoFileInput = document.getElementById('video-file');
+            const questionInput = document.getElementById('question');
+            const videoContainer = document.getElementById('video-container');
+            const videoPlayer = document.getElementById('video-player');
+            const analyzeBtn = document.getElementById('analyze-btn');
+            const progressContainer = document.querySelector('.progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const resultsContainer = document.getElementById('results-container');
+            const insightsContent = document.getElementById('insights-content');
+            const transcriptionContent = document.getElementById('transcription-content');
+            let uploadedFilename = '';
+            function processTimestamps(text) {
+                const pattern = /\[(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\]/g;
+                return text.replace(pattern, function(match, startTime) {
+                    let seconds = parseFloat(startTime);
+                    if (!isNaN(seconds)) {
+                        return `<span class="timestamp"
+                                 onclick="document.getElementById('video-player').currentTime = ${seconds}; document.getElementById('video-player').play();"
+                                 title="Clique para ir para ${match} no vídeo">${match}</span>`;
+                    }
+                    return match;
+                });
+            }
+            uploadForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                if (!videoFileInput.files[0]) {
+                    alert('Por favor, selecione um arquivo de vídeo.');
+                    return;
+                }
+                const formData = new FormData();
+                formData.append('file', videoFileInput.files[0]);
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        uploadedFilename = data.filename;
+                        videoPlayer.src = `/video/${data.filename}`;
+                        videoContainer.classList.remove('hidden');
+                    } else {
+                        alert('Erro: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('Erro no upload: ' + error);
+                });
+            });
+            analyzeBtn.addEventListener('click', function() {
+                if (!uploadedFilename) {
+                    alert('Faça upload de um vídeo primeiro.');
+                    return;
+                }
+                progressContainer.classList.remove('hidden');
+                resultsContainer.classList.add('hidden');
+                progressBar.style.width = '0%';
+                progressText.textContent = 'Iniciando análise...';
+                fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_path: 'uploads/' + uploadedFilename,
+                        question: questionInput.value
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    progressBar.style.width = '100%';
+                    progressText.textContent = 'Análise concluída!';
+                    if (data.success) {
+                        const formattedInsights = data.insights
+                            .replace(/\n\n+/g, '<br><br>')
+                            .replace(/\n/g, '<br>');
+                        insightsContent.innerHTML = processTimestamps(formattedInsights);
+                        const transcriptionHTML = data.transcription.map(segment => {
+                            const timespan = `<span class="timestamp" 
+                                              onclick="document.getElementById('video-player').currentTime = ${segment.start}; document.getElementById('video-player').play();"
+                                              title="Clique para ir para este momento no vídeo">[${segment.start.toFixed(2)}-${segment.end.toFixed(2)}]</span>`;
+                            return `<p>${timespan} ${segment.text}</p>`;
+                        }).join('');
+                        transcriptionContent.innerHTML = transcriptionHTML;
+                        setTimeout(() => {
+                            progressContainer.classList.add('hidden');
+                            resultsContainer.classList.remove('hidden');
+                        }, 1000);
+                    } else {
+                        alert('Erro: ' + data.error);
+                        progressContainer.classList.add('hidden');
+                    }
+                })
+                .catch(error => {
+                    alert('Erro na análise: ' + error);
+                    progressContainer.classList.add('hidden');
+                });
+            });
+        });
+    </script>
+</body>
+</html>
