@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment files
+.env
+frontend/.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Upload artifacts
+uploads/*.mp4
+uploads/*_part*.mp4
