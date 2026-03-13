@@ -81,11 +81,11 @@ const LANDING_PROOF_CARDS = [
 const LANDING_ENGINEERING_CARDS = [
   {
     title: 'Backend de verdade',
-    text: 'Flask com autenticação, sessão assinada, persistência local, controle de acesso e integração BYOK.'
+    text: 'Flask com autenticação, sessão assinada, processamento transitório de mídia, controle de acesso e integração BYOK.'
   },
   {
     title: 'Pipeline de mídia',
-    text: 'Upload validado, checagem de duração, divisão automática para transcrição e recuperação segura do vídeo.'
+    text: 'Upload validado, checagem de duração, divisão automática para transcrição e descarte do vídeo após o processamento.'
   },
   {
     title: 'Governança embutida',
@@ -107,7 +107,7 @@ const LANDING_ARCHITECTURE = [
   {
     step: '03',
     title: 'Upload e preparação',
-    text: 'Cada arquivo fica vinculado ao dono, respeita limites configuráveis e é particionado quando o provedor exige.'
+    text: 'Cada arquivo é validado, processado temporariamente e particionado quando o provedor exige, sem retenção do vídeo no servidor.'
   },
   {
     step: '04',
@@ -302,7 +302,6 @@ function App() {
   const [uploaded, setUploaded] = useState(null);
   const [analysisId, setAnalysisId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
   const [progressText, setProgressText] = useState('Aguardando envio...');
   const [insights, setInsights] = useState('');
@@ -350,7 +349,7 @@ function App() {
   const authPanelRef = useRef(null);
   const projectPanelRef = useRef(null);
   const videoRef = useRef(null);
-  const autoAnalyzeAttemptRef = useRef('');
+  const [localVideoUrl, setLocalVideoUrl] = useState('');
 
   const insightsLines = useMemo(() => {
     if (!insights) {
@@ -361,13 +360,11 @@ function App() {
 
   const hasResult = insights.length > 0 || transcription.length > 0;
   const hasOpenAiKey = Boolean(apiKeyStatus.is_active);
-  const apiKeyRotationMarker = apiKeyStatus.rotated_at || 0;
   const canUseAssistant = Boolean(analysisId) && hasOpenAiKey;
   const isLandingRoute = currentRoute === HOME_ROUTE;
   const isAppRoute = currentRoute === APP_ROUTE;
   const isBusy =
     isUploading ||
-    isAnalyzing ||
     isAsking ||
     isAuthLoading ||
     isBootstrapping ||
@@ -381,24 +378,17 @@ function App() {
       : !hasOpenAiKey
         ? 'Cadastre sua chave OpenAI'
         : isUploading
-          ? 'Enviando vídeo'
-          : isAnalyzing
-            ? 'Processando IA'
+          ? 'Enviando e analisando'
           : isAsking
-              ? 'Respondendo nova pergunta'
-              : uploaded?.filename
-                ? 'Vídeo enviado'
+            ? 'Respondendo nova pergunta'
+            : uploaded?.filename
+              ? 'Análise concluída'
+              : file?.name
+                ? 'Arquivo selecionado'
                 : 'Aguardando arquivo';
   const usageSummary = usageDashboard?.summary || null;
   const usageByEndpoint = Array.isArray(usageDashboard?.by_endpoint) ? usageDashboard.by_endpoint : [];
   const usageTimeline = Array.isArray(usageDashboard?.timeline) ? usageDashboard.timeline : [];
-
-  const videoUrl = useMemo(() => {
-    if (!uploaded?.stored_filename || !token) {
-      return '';
-    }
-    return endpoint(`/video/${encodeURIComponent(uploaded.stored_filename)}?token=${encodeURIComponent(token)}`);
-  }, [uploaded, token]);
 
   function navigateTo(route, { replace = false } = {}) {
     const nextRoute = normalizeRoute(route);
@@ -427,7 +417,6 @@ function App() {
   }
 
   function resetAnalysisState() {
-    autoAnalyzeAttemptRef.current = '';
     setFile(null);
     setQuestion('');
     setUploaded(null);
@@ -632,6 +621,20 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!file) {
+      setLocalVideoUrl('');
+      return undefined;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    setLocalVideoUrl(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+
+  useEffect(() => {
     async function loadPasswordPolicy() {
       try {
         const response = await fetch(endpoint('/auth/password-policy'));
@@ -663,20 +666,6 @@ function App() {
 
     loadUsageDashboard(usageDays, token, true);
   }, [usageDays]);
-
-  useEffect(() => {
-    if (!token || !hasOpenAiKey || !uploaded?.stored_filename || analysisId || isAnalyzing) {
-      return;
-    }
-
-    if (autoAnalyzeAttemptRef.current === uploaded.stored_filename) {
-      return;
-    }
-
-    autoAnalyzeAttemptRef.current = uploaded.stored_filename;
-    setProgressText('Vídeo enviado. Iniciando análise automática...');
-    void analyzeVideo(uploaded.stored_filename);
-  }, [analysisId, apiKeyRotationMarker, hasOpenAiKey, isAnalyzing, token, uploaded]);
 
   function jumpToTime(seconds) {
     if (!videoRef.current || Number.isNaN(seconds)) {
@@ -780,7 +769,6 @@ function App() {
       }
 
       setApiKeyInput('');
-      autoAnalyzeAttemptRef.current = '';
       setApiKeyStatus({
         is_active: true,
         masked_key: data.masked_key || null,
@@ -819,7 +807,6 @@ function App() {
       }
 
       setApiKeyStatus({ is_active: false, masked_key: null, rotated_at: null });
-      autoAnalyzeAttemptRef.current = '';
       setAnalysisId('');
       setProgressText('Chave OpenAI revogada.');
     } catch (integrationError) {
@@ -829,11 +816,29 @@ function App() {
     }
   }
 
+  function handleFileChange(event) {
+    const nextFile = event.target.files?.[0] || null;
+    setFile(nextFile);
+    setUploaded(null);
+    setAnalysisId('');
+    setInsights('');
+    setTranscription([]);
+    setChatInput('');
+    setChatMessages([]);
+    setActiveTab('insights');
+    setError('');
+    setProgressText(nextFile ? 'Arquivo selecionado. Pronto para enviar e analisar.' : 'Aguardando envio...');
+  }
+
   async function handleUpload(event) {
     event.preventDefault();
 
     if (!token) {
       setError('Faça login para enviar vídeos.');
+      return;
+    }
+    if (!hasOpenAiKey) {
+      setError('Cadastre sua chave OpenAI antes de enviar o vídeo.');
       return;
     }
 
@@ -864,11 +869,12 @@ function App() {
     setChatInput('');
     setChatMessages([]);
     setActiveTab('insights');
-    setProgressText('Enviando vídeo...');
+    setProgressText('Enviando vídeo para análise transitória...');
 
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('question', question);
 
       const response = await fetch(endpoint('/upload'), {
         method: 'POST',
@@ -882,78 +888,12 @@ function App() {
         return;
       }
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Erro ao enviar o vídeo.');
-      }
-
-      setUploaded(data);
-      autoAnalyzeAttemptRef.current = '';
-      if (!hasOpenAiKey) {
-        setProgressText('Upload concluído. Cadastre sua chave para liberar a análise automática.');
-        return;
-      }
-    } catch (uploadError) {
-      const rawMessage = String(uploadError?.message || '');
-      const isNetworkError =
-        uploadError instanceof TypeError ||
-        rawMessage.includes('Failed to fetch') ||
-        rawMessage.includes('NetworkError');
-      if (isNetworkError) {
-        setError(
-          `Falha de conexão no upload. Verifique se o backend está rodando em http://localhost:5000 e se o arquivo está dentro de ${latestMaxUploadMb}MB.`
-        );
-      } else {
-        setError(uploadError.message);
-      }
-      setProgressText('Falha no upload.');
-    } finally {
-      setIsUploading(false);
-    }
-  }
-
-  async function analyzeVideo(storedFilename) {
-    if (!token) {
-      setError('Faça login para analisar vídeos.');
-      return false;
-    }
-
-    if (!hasOpenAiKey) {
-      setError('Cadastre sua chave para usar IA.');
-      return false;
-    }
-
-    if (!storedFilename) {
-      setError('Faça o upload de um vídeo primeiro.');
-      return false;
-    }
-
-    setError('');
-    setIsAnalyzing(true);
-    setProgressText('Upload concluído. Transcrevendo e analisando automaticamente...');
-
-    try {
-      const response = await fetch(endpoint('/analyze'), {
-        method: 'POST',
-        headers: buildAuthHeaders({
-          'Content-Type': 'application/json'
-        }),
-        body: JSON.stringify({
-          stored_filename: storedFilename,
-          question
-        })
-      });
-
-      const data = await readApiPayload(response);
-      if (response.status === 401) {
-        clearAuthSession('Sessão expirada. Faça login novamente.');
-        return false;
-      }
-      if (!response.ok || !data.success) {
         if (response.status === 502 || data.code === 'provider_failure') {
           throw new Error(
             'Falha na OpenAI (502). Verifique se a chave está válida, com créditos e sem bloqueio de rede.'
           );
         }
-        throw new Error(data.error || 'Erro ao analisar o vídeo.');
+        throw new Error(data.error || 'Erro ao enviar o vídeo.');
       }
 
       const normalizedInsights = data.insights || '';
@@ -966,20 +906,33 @@ function App() {
         initialMessages.push({ role: 'assistant', content: normalizedInsights });
       }
 
+      setUploaded({
+        filename: data.filename || file.name,
+        video_retained: Boolean(data.video_retained)
+      });
       setAnalysisId(data.analysis_id || '');
       setInsights(normalizedInsights);
       setTranscription(Array.isArray(data.transcription) ? data.transcription : []);
       setChatMessages(initialMessages);
       setActiveTab('assistant');
-      setProgressText('Análise concluída. Faça novas perguntas ou use as ações rápidas.');
+      setProgressText('Análise concluída. O vídeo foi processado temporariamente e descartado do servidor.');
       loadUsageDashboard(usageDays, token, true);
-      return true;
-    } catch (analysisError) {
-      setError(analysisError.message);
-      setProgressText('Falha durante a análise.');
-      return false;
+    } catch (uploadError) {
+      const rawMessage = String(uploadError?.message || '');
+      const isNetworkError =
+        uploadError instanceof TypeError ||
+        rawMessage.includes('Failed to fetch') ||
+        rawMessage.includes('NetworkError');
+      if (isNetworkError) {
+        setError(
+          `Falha de conexão no envio. Verifique se o backend está rodando em http://localhost:5000 e se o arquivo está dentro de ${latestMaxUploadMb}MB.`
+        );
+      } else {
+        setError(uploadError.message);
+      }
+      setProgressText('Falha no envio/análise.');
     } finally {
-      setIsAnalyzing(false);
+      setIsUploading(false);
     }
   }
 
@@ -1430,10 +1383,13 @@ function App() {
                   id="video-file"
                   type="file"
                   accept=".mp4,.avi,.mov,.mkv"
-                  onChange={(event) => setFile(event.target.files?.[0] || null)}
+                  onChange={handleFileChange}
+                  disabled={isUploading}
                   required
                 />
-                <p className="help-text">Limite atual de upload: {maxUploadMb}MB por arquivo.</p>
+                <p className="help-text">
+                  Limite atual de upload: {maxUploadMb}MB por arquivo. O vídeo é processado temporariamente e não fica salvo no servidor.
+                </p>
 
                 <label htmlFor="question">Pergunta inicial (opcional)</label>
                 <input
@@ -1442,10 +1398,11 @@ function App() {
                   value={question}
                   onChange={(event) => setQuestion(event.target.value)}
                   placeholder="Ex: Quais decisões foram tomadas?"
+                  disabled={isUploading}
                 />
 
-                <button className="btn" type="submit" disabled={isUploading || isAnalyzing}>
-                  {isUploading ? 'Enviando...' : isAnalyzing ? 'Analisando...' : 'Enviar e analisar'}
+                <button className="btn" type="submit" disabled={isUploading}>
+                  {isUploading ? 'Enviando e analisando...' : 'Enviar e analisar'}
                 </button>
               </form>
             </>
@@ -1463,16 +1420,20 @@ function App() {
                 />
               </div>
 
-              {token && uploaded?.stored_filename ? (
+              {token && localVideoUrl ? (
                 <div className="video-card">
-                  <p className="video-label">Arquivo pronto: {uploaded.filename}</p>
-                  <video ref={videoRef} controls src={videoUrl}>
+                  <p className="video-label">Preview local: {uploaded?.filename || file?.name || 'Vídeo selecionado'}</p>
+                  <video ref={videoRef} controls src={localVideoUrl}>
                     Seu navegador não suporta reprodução de vídeo.
                   </video>
                   {!hasOpenAiKey ? (
-                    <p className="help-text">Cadastre sua chave para iniciar a análise automática deste vídeo.</p>
+                    <p className="help-text">Cadastre sua chave para liberar o processamento deste vídeo.</p>
+                  ) : isUploading ? (
+                    <p className="help-text">O backend está processando o vídeo temporariamente e descartará o arquivo ao concluir.</p>
+                  ) : hasResult ? (
+                    <p className="help-text">O preview acima é local do navegador. O servidor não mantém cópia do vídeo após a análise.</p>
                   ) : (
-                    <p className="help-text">A análise começa automaticamente após o upload.</p>
+                    <p className="help-text">Ao enviar, a análise acontece no próprio upload e o vídeo não é persistido no servidor.</p>
                   )}
                 </div>
               ) : null}
@@ -1601,11 +1562,11 @@ function App() {
               <p>Cadastre uma chave em “Conta e integração”.</p>
               <p>Sem chave ativa, a análise e o assistente ficam bloqueados.</p>
             </div>
-          ) : uploaded?.stored_filename && !hasResult ? (
+          ) : isUploading && !hasResult ? (
             <div className="empty-state">
-              <h3>Análise automática em andamento</h3>
-              <p>O vídeo já foi enviado e a transcrição começa sem clique extra.</p>
-              <p>Quando a resposta chegar, ela aparecerá aqui na aba Assistente.</p>
+              <h3>Análise em andamento</h3>
+              <p>O vídeo está sendo enviado e processado no mesmo fluxo.</p>
+              <p>Quando a resposta chegar, ela aparecerá aqui na aba Assistente sem retenção do arquivo no servidor.</p>
             </div>
           ) : !hasResult ? (
             <div className="empty-state">

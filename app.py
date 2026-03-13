@@ -4,7 +4,9 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
@@ -83,12 +85,15 @@ SECRET_KEY = require_env("SECRET_KEY")
 app.secret_key = SECRET_KEY
 
 DATABASE_PATH = os.path.abspath(os.getenv("DATABASE_PATH", os.path.join(app.root_path, "app.db")))
-UPLOAD_FOLDER = os.path.abspath(os.getenv("UPLOAD_FOLDER", "uploads"))
 FRONTEND_DIST = os.path.join(app.root_path, "frontend", "dist")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 DEFAULT_MAX_FILE_SIZE_MB = 100
 DEFAULT_MAX_VIDEO_DURATION_SECONDS = 7200
+TRANSIENT_ANALYSIS_VIDEO_PATH = "[transient-upload]"
+DEFAULT_ANALYSIS_PROMPT = (
+    "Resuma os principais pontos da reuniao em bullets e destaque decisoes, riscos e proximos passos. "
+    "Inclua timestamps relevantes."
+)
 OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB = min(
     env_int("OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB", 25),
     25
@@ -130,7 +135,7 @@ REDIS_PREFIX = os.getenv("REDIS_PREFIX", "meeting_analysis")
 INTERNAL_ADMIN_KEY = os.getenv("INTERNAL_ADMIN_KEY", "").strip()
 USAGE_DASHBOARD_DEFAULT_DAYS = env_int("USAGE_DASHBOARD_DEFAULT_DAYS", 7)
 USAGE_DASHBOARD_MAX_DAYS = env_int("USAGE_DASHBOARD_MAX_DAYS", 90)
-ALEMBIC_HEAD_REVISION = os.getenv("ALEMBIC_HEAD_REVISION", "20260312_0001")
+ALEMBIC_HEAD_REVISION = os.getenv("ALEMBIC_HEAD_REVISION", "20260313_0002")
 SERVE_FRONTEND_FROM_FLASK = parse_bool(os.getenv("SERVE_FRONTEND_FROM_FLASK", "0"))
 
 
@@ -261,7 +266,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS analysis_sessions (
             id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,
-            video_path TEXT NOT NULL,
+            source_label TEXT NOT NULL,
             transcription_json TEXT NOT NULL,
             history_json TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
@@ -300,6 +305,12 @@ def init_db():
         )
         """
     )
+    analysis_session_columns = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(analysis_sessions)").fetchall()
+    }
+    if "video_path" in analysis_session_columns and "source_label" not in analysis_session_columns:
+        db.execute("ALTER TABLE analysis_sessions RENAME COLUMN video_path TO source_label")
     current_version = db.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
     if current_version is None:
         db.execute("INSERT INTO alembic_version (version_num) VALUES (?)", (ALEMBIC_HEAD_REVISION,))
@@ -580,7 +591,7 @@ def cleanup_expired_analysis_sessions():
         invalidate_cached_analysis_session(analysis_id)
 
 
-def create_analysis_session(user_id, video_path, segments, history):
+def create_analysis_session(user_id, source_label, segments, history):
     cleanup_expired_analysis_sessions()
 
     analysis_id = str(uuid.uuid4())
@@ -591,14 +602,14 @@ def create_analysis_session(user_id, video_path, segments, history):
     db.execute(
         """
         INSERT INTO analysis_sessions (
-            id, user_id, video_path, transcription_json, history_json,
+            id, user_id, source_label, transcription_json, history_json,
             status, created_at, updated_at, expires_at
         ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
         """,
         (
             analysis_id,
             user_id,
-            video_path,
+            source_label,
             json.dumps(segments, ensure_ascii=False),
             json.dumps(history, ensure_ascii=False),
             current_time,
@@ -613,7 +624,7 @@ def create_analysis_session(user_id, video_path, segments, history):
         {
             "id": analysis_id,
             "user_id": int(user_id),
-            "video_path": video_path,
+            "source_label": source_label,
             "segments": segments,
             "history": history,
             "expires_at": int(expires_at)
@@ -636,7 +647,7 @@ def get_analysis_session(user_id, analysis_id):
     db = get_db()
     row = db.execute(
         """
-        SELECT id, user_id, video_path, transcription_json, history_json, status,
+        SELECT id, user_id, source_label, transcription_json, history_json, status,
                created_at, updated_at, expires_at
           FROM analysis_sessions
          WHERE id = ?
@@ -670,7 +681,7 @@ def get_analysis_session(user_id, analysis_id):
     session = {
         "id": row["id"],
         "user_id": int(row["user_id"]),
-        "video_path": row["video_path"],
+        "source_label": row["source_label"],
         "segments": transcription,
         "history": history,
         "expires_at": int(row["expires_at"])
@@ -838,12 +849,6 @@ def invalidate_cached_analysis_session(analysis_id):
         app.logger.exception("Falha ao invalidar analysis_session no Redis")
 
 
-def user_upload_dir(user_id):
-    path = os.path.join(UPLOAD_FOLDER, f"user_{user_id}")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
 def allowed_file_extension(filename):
     if "." not in filename:
         return False
@@ -876,34 +881,17 @@ def validate_uploaded_video(file_path):
         )
 
 
-def resolve_user_video_path(user_id, stored_filename="", file_path=""):
-    upload_root = user_upload_dir(user_id)
-
-    if stored_filename:
-        safe_name = secure_filename(stored_filename)
-        if not safe_name or safe_name != stored_filename:
-            raise ApiError(400, "Identificador de arquivo invalido.", "invalid_file_reference")
-        absolute_path = os.path.abspath(os.path.join(upload_root, safe_name))
-    elif file_path:
-        absolute_path = os.path.abspath(file_path)
-    else:
-        raise ApiError(400, "Referencia de arquivo obrigatoria.", "missing_file_reference")
-
-    if os.path.commonpath([absolute_path, upload_root]) != upload_root:
-        raise ApiError(403, "Sem permissao para acessar esse arquivo.", "forbidden")
-
-    if not os.path.exists(absolute_path):
-        raise ApiError(400, "Arquivo de video nao encontrado.", "file_not_found")
-
-    return absolute_path
-
-
 def build_transcript_with_times(segments):
     return "\n".join(
         f"[{segment.get('start', 0):.2f}-{segment.get('end', 0):.2f}] {segment.get('text', '').strip()}"
         for segment in segments
         if str(segment.get("text", "")).strip()
     )
+
+
+def build_initial_prompt(question):
+    prompt = str(question or "").strip()
+    return prompt or DEFAULT_ANALYSIS_PROMPT
 
 
 def ask_openai(api_key, segments, user_prompt, history=None):
@@ -970,6 +958,32 @@ def ask_openai(api_key, segments, user_prompt, history=None):
         "answer": content,
         "usage": payload.get("usage", {}),
         "model": payload.get("model", OPENAI_CHAT_MODEL)
+    }
+
+
+def run_video_analysis(user_id, api_key, video_path, question="", session_source_label=TRANSIENT_ANALYSIS_VIDEO_PATH):
+    initial_prompt = build_initial_prompt(question)
+    segments = transcribe_large_video(api_key, video_path)
+    chat_result = ask_openai(api_key, segments, initial_prompt)
+    insights = chat_result["answer"]
+    initial_history = [
+        {"role": "user", "content": initial_prompt},
+        {"role": "assistant", "content": insights}
+    ]
+    analysis_id = create_analysis_session(
+        user_id,
+        session_source_label,
+        segments,
+        initial_history
+    )
+
+    return {
+        "analysis_id": analysis_id,
+        "insights": insights,
+        "transcription": segments,
+        "history": initial_history,
+        "usage": chat_result["usage"],
+        "model": chat_result["model"]
     }
 
 
@@ -1393,6 +1407,7 @@ def delete_openai_key():
 @require_auth
 def upload_video():
     enforce_rate_limit("upload", RATE_LIMIT_UPLOAD_PER_MIN)
+    enforce_rate_limit("analyze", RATE_LIMIT_ANALYZE_PER_MIN)
 
     if "file" not in request.files:
         raise ApiError(400, "Nenhum arquivo enviado.", "missing_file")
@@ -1409,97 +1424,42 @@ def upload_video():
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise ApiError(400, f"Extensao nao permitida. Use: {allowed}.", "invalid_extension")
 
-    extension = safe_original_name.rsplit(".", 1)[1].lower()
-    stored_filename = f"{uuid.uuid4().hex}.{extension}"
-
-    destination_dir = user_upload_dir(g.current_user["id"])
-    file_path = os.path.join(destination_dir, stored_filename)
-    file.save(file_path)
-
-    max_file_size_bytes = current_max_file_size_bytes()
-    max_file_size_mb = current_max_file_size_mb()
-    if os.path.getsize(file_path) > max_file_size_bytes:
-        os.remove(file_path)
-        raise ApiError(413, f"Arquivo excede o limite de {max_file_size_mb}MB.", "file_too_large")
-
-    try:
-        validate_uploaded_video(file_path)
-    except ApiError:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise
-
-    return json_success({
-        "filename": safe_original_name,
-        "stored_filename": stored_filename
-    })
-
-
-@app.route("/video/<path:filename>", methods=["GET"])
-@require_auth(allow_query_token=True)
-def serve_video(filename):
-    safe_filename = secure_filename(filename)
-    if not safe_filename or safe_filename != filename:
-        raise ApiError(400, "Arquivo solicitado invalido.", "invalid_file_reference")
-
-    user_dir = user_upload_dir(g.current_user["id"])
-    absolute_path = os.path.abspath(os.path.join(user_dir, safe_filename))
-
-    if os.path.commonpath([absolute_path, user_dir]) != user_dir:
-        raise ApiError(403, "Sem permissao para acessar esse arquivo.", "forbidden")
-    if not os.path.exists(absolute_path):
-        raise ApiError(404, "Video nao encontrado.", "file_not_found")
-
-    return send_from_directory(user_dir, safe_filename)
-
-
-@app.route("/analyze", methods=["POST"])
-@require_auth
-def analyze():
-    enforce_rate_limit("analyze", RATE_LIMIT_ANALYZE_PER_MIN)
-
-    payload = request.get_json(silent=True) or {}
-    stored_filename = str(payload.get("stored_filename", "")).strip()
-    file_path = str(payload.get("file_path", "")).strip()
-    question = str(payload.get("question", "")).strip()
-
-    video_path = resolve_user_video_path(g.current_user["id"], stored_filename=stored_filename, file_path=file_path)
-
-    initial_prompt = question or (
-        "Resuma os principais pontos da reuniao em bullets e destaque decisoes, riscos e proximos passos. "
-        "Inclua timestamps relevantes."
-    )
-
+    question = str(request.form.get("question", "")).strip()
     api_key = get_active_openai_key_or_error(g.current_user["id"])
+    extension = safe_original_name.rsplit(".", 1)[1].lower()
+    temp_dir = tempfile.mkdtemp(prefix=f"meeting_analysis_user_{g.current_user['id']}_")
+    file_path = os.path.join(temp_dir, f"input.{extension}")
 
     try:
-        segments = transcribe_large_video(api_key, video_path)
-        chat_result = ask_openai(api_key, segments, initial_prompt)
-        insights = chat_result["answer"]
-        initial_history = [
-            {"role": "user", "content": initial_prompt},
-            {"role": "assistant", "content": insights}
-        ]
-        analysis_id = create_analysis_session(
-            g.current_user["id"],
-            video_path,
-            segments,
-            initial_history
+        file.save(file_path)
+
+        max_file_size_bytes = current_max_file_size_bytes()
+        max_file_size_mb = current_max_file_size_mb()
+        if os.path.getsize(file_path) > max_file_size_bytes:
+            raise ApiError(413, f"Arquivo excede o limite de {max_file_size_mb}MB.", "file_too_large")
+
+        validate_uploaded_video(file_path)
+        result = run_video_analysis(
+            user_id=g.current_user["id"],
+            api_key=api_key,
+            video_path=file_path,
+            question=question,
+            session_source_label=f"{TRANSIENT_ANALYSIS_VIDEO_PATH}:{safe_original_name}"
         )
 
         safe_log_usage_event(
             user_id=g.current_user["id"],
-            session_id=analysis_id,
-            endpoint="/analyze",
-            model=chat_result["model"],
-            usage=chat_result["usage"],
+            session_id=result["analysis_id"],
+            endpoint="/upload",
+            model=result["model"],
+            usage=result["usage"],
             http_status=200
         )
     except ApiError as error:
         safe_log_usage_event(
             user_id=g.current_user["id"],
             session_id=None,
-            endpoint="/analyze",
+            endpoint="/upload",
             model=OPENAI_CHAT_MODEL,
             usage={},
             http_status=error.status_code
@@ -1509,18 +1469,22 @@ def analyze():
         safe_log_usage_event(
             user_id=g.current_user["id"],
             session_id=None,
-            endpoint="/analyze",
+            endpoint="/upload",
             model=OPENAI_CHAT_MODEL,
             usage={},
             http_status=502
         )
         raise ApiError(502, f"Falha ao comunicar com OpenAI: {error}", "provider_failure") from error
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     return json_success({
-        "analysis_id": analysis_id,
-        "insights": insights,
-        "transcription": segments,
-        "timestamps": []
+        "filename": safe_original_name,
+        "analysis_id": result["analysis_id"],
+        "insights": result["insights"],
+        "transcription": result["transcription"],
+        "timestamps": [],
+        "video_retained": False
     })
 
 

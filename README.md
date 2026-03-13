@@ -1,6 +1,6 @@
 # Analise de Reuniao
 
-Aplicacao para upload de videos de reunioes, transcricao com OpenAI e follow-up em formato de chat. O projeto usa modelo BYOK: cada usuario cadastra a propria chave OpenAI, e o backend faz as chamadas ao provedor sem expor o segredo no frontend.
+Aplicacao para upload de videos de reunioes, transcricao com OpenAI e follow-up em formato de chat. O projeto usa modelo BYOK: cada usuario cadastra a propria chave OpenAI, e o backend faz as chamadas ao provedor sem expor o segredo no frontend. Os videos sao processados temporariamente durante o upload e descartados ao final da analise.
 
 ## Stack
 
@@ -16,6 +16,7 @@ Aplicacao para upload de videos de reunioes, transcricao com OpenAI e follow-up 
 - `backend` roda em `http://localhost:5000`
 - Em desenvolvimento, o Flask fica como API apenas
 - O upload ja dispara a analise automaticamente
+- O backend nao persiste os videos enviados
 - Login, cadastro, chave OpenAI, upload, analise e follow-up passam pelo backend
 
 ## Pre-requisitos
@@ -84,6 +85,12 @@ python app.py
 
 O backend ficara em `http://localhost:5000`.
 
+Se o banco local ja existir e voce quiser alinhar o schema explicitamente com as revisoes Alembic:
+
+```bash
+alembic upgrade head
+```
+
 ### Frontend
 
 1. Instale as dependencias:
@@ -108,7 +115,24 @@ O frontend ficara em `http://localhost:5173`.
 3. Cadastre a chave OpenAI em `Conta e integracao`
 4. Envie um video
 5. A analise comeca automaticamente
-6. Use o assistente para perguntas adicionais sem reenviar o video
+6. O video e descartado do servidor ao fim do processamento
+7. Use o assistente para perguntas adicionais sem reenviar o video
+
+## Testes
+
+Instale as dependencias de teste no mesmo ambiente virtual:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Rode a suite com cobertura:
+
+```bash
+pytest
+```
+
+O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term-missing`.
 
 ## Variaveis importantes
 
@@ -134,9 +158,7 @@ O frontend ficara em `http://localhost:5173`.
 - `GET /integrations/openai-key/status`
 - `DELETE /integrations/openai-key`
 - `POST /upload`
-- `POST /analyze`
 - `POST /followup`
-- `GET /video/<filename>`
 - `GET /usage/dashboard`
 - `GET /health`
 
@@ -170,4 +192,5 @@ Nesse modo, o Flask tenta servir os arquivos de `frontend/dist`.
 - O projeto usa SQLite por padrao em `app.db`
 - Redis e opcional; sem ele o sistema usa fallback local em memoria para parte do comportamento
 - Se o `upload` ou a validacao de video falharem, confira se `ffmpeg` e `ffprobe` estao instalados corretamente
+- O preview de video em `/app` e local do navegador; ele nao depende de arquivo salvo no backend
 - Se a analise retornar `502`, normalmente o problema esta na chave OpenAI, credito, limite ou falha de rede com o provedor
