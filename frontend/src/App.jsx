@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL?.trim() || '';
 const AUTH_TOKEN_STORAGE_KEY = 'meeting_analysis_auth_token';
+const HOME_ROUTE = '/';
+const APP_ROUTE = '/app';
 
 const QUICK_ACTIONS = [
   {
@@ -20,6 +22,160 @@ const QUICK_ACTIONS = [
   {
     label: 'Plano de ação',
     prompt: 'Monte um plano de ação para os próximos 7 dias com etapas práticas e timestamps.'
+  }
+];
+
+const LANDING_METRICS = [
+  {
+    label: 'Preço',
+    value: '100% gratuito',
+    note: 'Projeto autoral criado para portfolio técnico.'
+  },
+  {
+    label: 'Modelo',
+    value: 'BYOK seguro',
+    note: 'Cada usuário conecta a própria chave OpenAI.'
+  },
+  {
+    label: 'Fluxo',
+    value: 'Upload -> análise',
+    note: 'A IA começa automaticamente após o envio.'
+  },
+  {
+    label: 'Foco',
+    value: 'Engenharia real',
+    note: 'Auth, criptografia, proxy, uso e governança.'
+  }
+];
+
+const LANDING_SHOWCASE_LINES = [
+  { label: 'Projeto', value: 'Portfolio build / free access' },
+  { label: 'Objetivo', value: 'Mostrar engenharia full-stack aplicada' },
+  { label: 'Segredo', value: 'OpenAI protegida via backend proxy' },
+  { label: 'Diferencial', value: 'BYOK + análise automática de vídeo' }
+];
+
+const LANDING_PROOF_CARDS = [
+  {
+    eyebrow: 'Produto',
+    title: 'Resolve um problema real',
+    text: 'Transforma reuniões longas em resumo executivo, decisões, tarefas e follow-up com contexto.'
+  },
+  {
+    eyebrow: 'Segurança',
+    title: 'Protege a integração com OpenAI',
+    text: 'A chave do usuário fica criptografada, mascarada na interface e nunca reaparece no front depois do cadastro.'
+  },
+  {
+    eyebrow: 'Operação',
+    title: 'Vai além de uma demo visual',
+    text: 'Inclui owner check, status de integração, dashboard de consumo, limites e mensagens claras de erro.'
+  },
+  {
+    eyebrow: 'Experiência',
+    title: 'Entrega um fluxo direto',
+    text: 'Conta, chave, upload e análise se conectam sem atrito, reduzindo cliques e fricção de uso.'
+  }
+];
+
+const LANDING_ENGINEERING_CARDS = [
+  {
+    title: 'Backend de verdade',
+    text: 'Flask com autenticação, sessão assinada, persistência local, controle de acesso e integração BYOK.'
+  },
+  {
+    title: 'Pipeline de mídia',
+    text: 'Upload validado, checagem de duração, divisão automática para transcrição e recuperação segura do vídeo.'
+  },
+  {
+    title: 'Governança embutida',
+    text: 'Eventos de uso, consumo por usuário, rotação de chave e arquitetura pronta para evoluir com Redis e billing.'
+  }
+];
+
+const LANDING_ARCHITECTURE = [
+  {
+    step: '01',
+    title: 'Conta e autenticação',
+    text: 'Cadastro com política de senha, hash com salt, token assinado e validação em todas as rotas críticas.'
+  },
+  {
+    step: '02',
+    title: 'OpenAI em modo BYOK',
+    text: 'A chave do usuário é validada, criptografada e resolvida no backend conforme o owner autenticado.'
+  },
+  {
+    step: '03',
+    title: 'Upload e preparação',
+    text: 'Cada arquivo fica vinculado ao dono, respeita limites configuráveis e é particionado quando o provedor exige.'
+  },
+  {
+    step: '04',
+    title: 'Resumo e follow-up',
+    text: 'A transcrição alimenta o insight inicial e sustenta perguntas adicionais sem reenviar o vídeo.'
+  }
+];
+
+const LANDING_STACK = [
+  'Flask API',
+  'React + Vite',
+  'SQLite',
+  'Redis opcional',
+  'FFmpeg',
+  'OpenAI BYOK',
+  'Fernet',
+  'Rate limiting',
+  'Usage dashboard'
+];
+
+const LANDING_OUTPUTS = [
+  'Resumo executivo com timestamps',
+  'Checklist e lista de tarefas',
+  'Decisões e próximos passos',
+  'Follow-up contextual sem reprocesso'
+];
+
+const LANDING_LINKS = [
+  {
+    label: 'GitHub',
+    href: 'https://github.com/LucasTalen',
+    note: 'Perfil principal'
+  },
+  {
+    label: 'LinkedIn',
+    href: 'https://www.linkedin.com/in/lucas-de-paula-soares/',
+    note: 'Perfil profissional'
+  },
+  {
+    label: 'Portfólio',
+    href: 'https://github.com/LucasTalen?tab=repositories',
+    note: 'Vitrine de projetos'
+  },
+  {
+    label: 'Repositório',
+    href: 'https://github.com/LucasTalen/Analise_de_Reuniao',
+    note: 'Código deste projeto'
+  }
+];
+
+const LANDING_FLOW_SNAPSHOTS = [
+  {
+    eyebrow: 'Tela 01',
+    title: 'Conta + chave OpenAI',
+    text: 'O usuário cria conta, valida a política de senha e registra a própria chave sem expor segredo no frontend.',
+    tags: ['Auth', 'Hash + salt', 'BYOK']
+  },
+  {
+    eyebrow: 'Tela 02',
+    title: 'Upload e disparo automático',
+    text: 'O vídeo é enviado, validado, vinculado ao dono e a análise começa sozinha sem clique adicional.',
+    tags: ['Owner check', 'Upload', 'Auto analysis']
+  },
+  {
+    eyebrow: 'Tela 03',
+    title: 'Insights e follow-up',
+    text: 'Resumo com timestamps, perguntas adicionais e uma camada de uso/governança para o projeto evoluir.',
+    tags: ['Chat', 'Timestamps', 'Usage']
   }
 ];
 
@@ -130,6 +286,16 @@ function getStoredToken() {
   return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '';
 }
 
+function normalizeRoute(pathname) {
+  const raw = String(pathname || '').trim();
+  if (!raw || raw === '/') {
+    return HOME_ROUTE;
+  }
+
+  const normalized = raw.endsWith('/') && raw !== '/' ? raw.slice(0, -1) : raw;
+  return normalized === APP_ROUTE ? APP_ROUTE : HOME_ROUTE;
+}
+
 function App() {
   const [file, setFile] = useState(null);
   const [question, setQuestion] = useState('');
@@ -147,6 +313,9 @@ function App() {
   const [error, setError] = useState('');
   const [backendReachable, setBackendReachable] = useState(true);
   const [maxUploadMb, setMaxUploadMb] = useState(100);
+  const [currentRoute, setCurrentRoute] = useState(() =>
+    normalizeRoute(typeof window !== 'undefined' ? window.location.pathname : HOME_ROUTE)
+  );
 
   const [token, setToken] = useState(() => getStoredToken());
   const [currentUser, setCurrentUser] = useState(null);
@@ -178,6 +347,8 @@ function App() {
   const [usageDashboard, setUsageDashboard] = useState(null);
   const [isUsageLoading, setIsUsageLoading] = useState(false);
 
+  const authPanelRef = useRef(null);
+  const projectPanelRef = useRef(null);
   const videoRef = useRef(null);
   const autoAnalyzeAttemptRef = useRef('');
 
@@ -192,6 +363,8 @@ function App() {
   const hasOpenAiKey = Boolean(apiKeyStatus.is_active);
   const apiKeyRotationMarker = apiKeyStatus.rotated_at || 0;
   const canUseAssistant = Boolean(analysisId) && hasOpenAiKey;
+  const isLandingRoute = currentRoute === HOME_ROUTE;
+  const isAppRoute = currentRoute === APP_ROUTE;
   const isBusy =
     isUploading ||
     isAnalyzing ||
@@ -227,6 +400,23 @@ function App() {
     return endpoint(`/video/${encodeURIComponent(uploaded.stored_filename)}?token=${encodeURIComponent(token)}`);
   }, [uploaded, token]);
 
+  function navigateTo(route, { replace = false } = {}) {
+    const nextRoute = normalizeRoute(route);
+    if (typeof window === 'undefined') {
+      setCurrentRoute(nextRoute);
+      return;
+    }
+
+    const currentPath = normalizeRoute(window.location.pathname);
+    if (currentPath !== nextRoute) {
+      const method = replace ? 'replaceState' : 'pushState';
+      window.history[method]({}, '', nextRoute);
+    }
+
+    setCurrentRoute(nextRoute);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   function persistToken(nextToken) {
     if (nextToken) {
       localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, nextToken);
@@ -261,6 +451,27 @@ function App() {
     if (message) {
       setError(message);
     }
+  }
+
+  function scrollToSection(ref) {
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function handleLandingAuth(mode) {
+    setAuthMode(mode);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+    navigateTo(APP_ROUTE);
+    window.setTimeout(() => scrollToSection(authPanelRef), 80);
+  }
+
+  function handleLandingExplore() {
+    if (!isLandingRoute) {
+      navigateTo(HOME_ROUTE);
+      window.setTimeout(() => scrollToSection(projectPanelRef), 80);
+      return;
+    }
+    scrollToSection(projectPanelRef);
   }
 
   function buildAuthHeaders(extra = {}, authToken = token) {
@@ -389,6 +600,24 @@ function App() {
       setIsBootstrapping(false);
     }
   }
+
+  useEffect(() => {
+    function syncRouteWithLocation() {
+      if (typeof window === 'undefined') {
+        return;
+      }
+
+      const nextRoute = normalizeRoute(window.location.pathname);
+      if (window.location.pathname !== nextRoute) {
+        window.history.replaceState({}, '', nextRoute);
+      }
+      setCurrentRoute(nextRoute);
+    }
+
+    syncRouteWithLocation();
+    window.addEventListener('popstate', syncRouteWithLocation);
+    return () => window.removeEventListener('popstate', syncRouteWithLocation);
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -832,44 +1061,190 @@ function App() {
     <div className="app-shell">
       <div className="bg-shape bg-shape-a" />
       <div className="bg-shape bg-shape-b" />
-      <header className="hero">
-        <p className="eyebrow">Analise de Reuniao</p>
-        <h1>Análise de Vídeo com IA (BYOK)</h1>
-        <p className="subtitle">
-          Faça login, conecte sua chave OpenAI e analise reuniões sem expor segredos no front-end.
-        </p>
-        <div className="hero-metrics hero-metrics-wide">
-          <article className="metric-card">
-            <p>Conta</p>
-            <strong>{currentUser?.email || 'Não autenticado'}</strong>
-          </article>
-          <article className="metric-card">
-            <p>Integração OpenAI</p>
-            <strong>{hasOpenAiKey ? apiKeyStatus.masked_key || 'Ativa' : 'Não configurada'}</strong>
-          </article>
-          <article className="metric-card">
-            <p>Arquivo</p>
-            <strong>{uploaded?.filename || 'Nenhum enviado'}</strong>
-          </article>
-          <article className="metric-card">
-            <p>Status</p>
-            <strong>{workflowState}</strong>
-          </article>
-        </div>
-        <div className="flow-steps">
-          <span className={`flow-step ${token ? 'flow-step-done' : ''}`}>1. Login</span>
-          <span className={`flow-step ${hasOpenAiKey ? 'flow-step-done' : ''}`}>2. Chave OpenAI</span>
-          <span className={`flow-step ${uploaded ? 'flow-step-done' : ''}`}>3. Upload</span>
-          <span className={`flow-step ${hasResult ? 'flow-step-done' : ''}`}>4. Análise</span>
-          <span className={`flow-step ${chatMessages.length > 2 ? 'flow-step-done' : ''}`}>5. Conversa contínua</span>
-        </div>
+      <header className={`hero ${isLandingRoute ? 'hero-landing' : ''}`}>
+        {isLandingRoute ? (
+          <>
+            <div className="hero-landing-grid">
+              <div className="hero-copy">
+                <p className="eyebrow">Projeto autoral • gratuito • portfolio técnico</p>
+                <h1>Transformo vídeos de reunião em decisões, tarefas e follow-up com IA.</h1>
+                <p className="subtitle hero-subtitle-strong">
+                  Esta aplicação existe para mostrar minhas habilidades em produto, arquitetura full-stack,
+                  integração segura com OpenAI e experiência de uso. O usuário entra com a própria chave,
+                  o backend protege o segredo e o vídeo já dispara a análise automaticamente.
+                </p>
+                <div className="hero-actions">
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => (token ? navigateTo(APP_ROUTE) : handleLandingAuth('register'))}
+                  >
+                    {token ? 'Abrir aplicação' : 'Criar conta e testar'}
+                  </button>
+                  <button className="btn btn-ghost hero-btn-alt" type="button" onClick={handleLandingExplore}>
+                    Ver arquitetura
+                  </button>
+                </div>
+                <div className="hero-badges">
+                  <span className="hero-badge">100% gratuito</span>
+                  <span className="hero-badge">BYOK seguro</span>
+                  <span className="hero-badge">Upload → análise</span>
+                  <span className="hero-badge">Projeto de portfólio</span>
+                </div>
+              </div>
+
+              <aside className="hero-showcase">
+                <div className="showcase-window">
+                  <div className="showcase-topbar">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <p className="showcase-kicker">$ portfolio/run project</p>
+                  <h2>Um build que combina segurança, IA aplicada e visão de produto.</h2>
+                  <div className="showcase-grid">
+                    {LANDING_SHOWCASE_LINES.map((item) => (
+                      <article className="showcase-line" key={item.label}>
+                        <p>{item.label}</p>
+                        <strong>{item.value}</strong>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div className="hero-metrics hero-metrics-wide hero-metrics-landing">
+              {LANDING_METRICS.map((item) => (
+                <article className="metric-card" key={item.label}>
+                  <p>{item.label}</p>
+                  <strong>{item.value}</strong>
+                  <span>{item.note}</span>
+                </article>
+              ))}
+            </div>
+
+            <div className="creator-links">
+              {LANDING_LINKS.map((item) => (
+                <a
+                  key={item.label}
+                  className="creator-link-card"
+                  href={item.href}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <p>{item.label}</p>
+                  <strong>{item.note}</strong>
+                </a>
+              ))}
+            </div>
+
+            <div className="flow-steps">
+              <span className="flow-step">1. Crie sua conta</span>
+              <span className="flow-step">2. Conecte sua chave OpenAI</span>
+              <span className="flow-step">3. Envie um vídeo</span>
+              <span className="flow-step">4. Receba insights automáticos</span>
+              <span className="flow-step">5. Continue no assistente</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="eyebrow">Analise de Reuniao</p>
+            <h1>Análise de Vídeo com IA (BYOK)</h1>
+            <p className="subtitle">
+              Faça login, conecte sua chave OpenAI e analise reuniões sem expor segredos no front-end.
+            </p>
+            <div className="hero-actions">
+              <button className="btn btn-ghost hero-btn-alt" type="button" onClick={() => navigateTo(HOME_ROUTE)}>
+                Ver landing
+              </button>
+            </div>
+            <div className="hero-metrics hero-metrics-wide">
+              <article className="metric-card">
+                <p>Conta</p>
+                <strong>{currentUser?.email || 'Não autenticado'}</strong>
+              </article>
+              <article className="metric-card">
+                <p>Integração OpenAI</p>
+                <strong>{hasOpenAiKey ? apiKeyStatus.masked_key || 'Ativa' : 'Não configurada'}</strong>
+              </article>
+              <article className="metric-card">
+                <p>Arquivo</p>
+                <strong>{uploaded?.filename || 'Nenhum enviado'}</strong>
+              </article>
+              <article className="metric-card">
+                <p>Status</p>
+                <strong>{workflowState}</strong>
+              </article>
+            </div>
+            <div className="flow-steps">
+              <span className={`flow-step ${token ? 'flow-step-done' : ''}`}>1. Login</span>
+              <span className={`flow-step ${hasOpenAiKey ? 'flow-step-done' : ''}`}>2. Chave OpenAI</span>
+              <span className={`flow-step ${uploaded ? 'flow-step-done' : ''}`}>3. Upload</span>
+              <span className={`flow-step ${hasResult ? 'flow-step-done' : ''}`}>4. Análise</span>
+              <span className={`flow-step ${chatMessages.length > 2 ? 'flow-step-done' : ''}`}>5. Conversa contínua</span>
+            </div>
+          </>
+        )}
       </header>
 
       <main className="layout">
-        <section className="panel panel-upload">
-          {!token ? (
+        <section className="panel panel-upload" ref={authPanelRef}>
+          {isLandingRoute ? (
             <>
-              <h2>Acesse sua conta</h2>
+              <div className="launch-card">
+                <p className="account-title">Navegação do projeto</p>
+                <h2>Landing em <code>/</code>, aplicação em <code>/app</code></h2>
+                <p className="panel-lead">
+                  A página inicial agora funciona como vitrine pública do projeto. O fluxo real do produto
+                  fica isolado na rota da aplicação.
+                </p>
+                <div className="launch-points">
+                  <span>Home em /</span>
+                  <span>App em /app</span>
+                  <span>Portfolio técnico</span>
+                </div>
+              </div>
+
+              <div className="account-box">
+                <p className="account-title">Estado atual</p>
+                <p className="account-email">{token ? currentUser?.email || 'Sessão carregada' : 'Visitante anônimo'}</p>
+                <p className="help-text">
+                  {token
+                    ? 'Você já pode abrir o app diretamente para usar upload, integração e assistente.'
+                    : 'Entre no app para criar conta, cadastrar sua chave e testar o fluxo completo.'}
+                </p>
+              </div>
+
+              <div className="hero-actions">
+                <button className="btn" type="button" onClick={() => (token ? navigateTo(APP_ROUTE) : handleLandingAuth('register'))}>
+                  {token ? 'Abrir /app' : 'Ir para /app'}
+                </button>
+                <button className="btn btn-ghost hero-btn-alt" type="button" onClick={() => handleLandingAuth('login')}>
+                  Login em /app
+                </button>
+              </div>
+
+              {!backendReachable ? (
+                <p className="help-text">Servidor backend offline. Inicie o Flask para usar a aplicação em /app.</p>
+              ) : null}
+            </>
+          ) : !token ? (
+            <>
+              <div className="launch-card">
+                <p className="account-title">Teste o projeto em fluxo real</p>
+                <h2>Entre no app</h2>
+                <p className="panel-lead">
+                  Aqui não tem tela estática de showcase. O objetivo é deixar você percorrer o produto
+                  inteiro: conta, integração, upload, análise e follow-up.
+                </p>
+                <div className="launch-points">
+                  <span>Gratuito para usar</span>
+                  <span>Chave protegida no backend</span>
+                  <span>Análise automática após upload</span>
+                </div>
+              </div>
+
               <form onSubmit={handleAuthSubmit} className="upload-form">
                 <label htmlFor="auth-email">Email</label>
                 <input
@@ -1076,45 +1451,149 @@ function App() {
             </>
           )}
 
-          <div className="status-row">
-            <span className={`dot ${isBusy ? 'dot-running' : ''}`} />
-            <p>{progressText}</p>
-          </div>
-          <div className="progress-track" aria-hidden="true">
-            <span
-              className={`progress-fill ${isBusy ? 'progress-fill-running' : ''} ${hasResult ? 'progress-fill-done' : ''}`}
-            />
-          </div>
+          {isAppRoute ? (
+            <>
+              <div className="status-row">
+                <span className={`dot ${isBusy ? 'dot-running' : ''}`} />
+                <p>{progressText}</p>
+              </div>
+              <div className="progress-track" aria-hidden="true">
+                <span
+                  className={`progress-fill ${isBusy ? 'progress-fill-running' : ''} ${hasResult ? 'progress-fill-done' : ''}`}
+                />
+              </div>
 
-          {token && uploaded?.stored_filename ? (
-            <div className="video-card">
-              <p className="video-label">Arquivo pronto: {uploaded.filename}</p>
-              <video ref={videoRef} controls src={videoUrl}>
-                Seu navegador não suporta reprodução de vídeo.
-              </video>
-              {!hasOpenAiKey ? (
-                <p className="help-text">Cadastre sua chave para iniciar a análise automática deste vídeo.</p>
-              ) : (
-                <p className="help-text">A análise começa automaticamente após o upload.</p>
-              )}
-            </div>
+              {token && uploaded?.stored_filename ? (
+                <div className="video-card">
+                  <p className="video-label">Arquivo pronto: {uploaded.filename}</p>
+                  <video ref={videoRef} controls src={videoUrl}>
+                    Seu navegador não suporta reprodução de vídeo.
+                  </video>
+                  {!hasOpenAiKey ? (
+                    <p className="help-text">Cadastre sua chave para iniciar a análise automática deste vídeo.</p>
+                  ) : (
+                    <p className="help-text">A análise começa automaticamente após o upload.</p>
+                  )}
+                </div>
+              ) : null}
+
+              {error ? <p className="error-box">{error}</p> : null}
+            </>
           ) : null}
-
-          {error ? <p className="error-box">{error}</p> : null}
         </section>
 
-        <section className="panel panel-results">
+        <section className="panel panel-results" ref={projectPanelRef}>
           <div className="result-header">
-            <h2>Resultados e assistente</h2>
-            <p>Navegue pelos timestamps ou continue perguntando sem reprocessar o vídeo.</p>
+            {isLandingRoute ? (
+              <>
+                <h2>Projeto em destaque</h2>
+                <p>
+                  Mais do que uma interface bonita: este build foi pensado para mostrar arquitetura,
+                  segurança, produto e execução ponta a ponta.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2>Resultados e assistente</h2>
+                <p>Navegue pelos timestamps ou continue perguntando sem reprocessar o vídeo.</p>
+              </>
+            )}
           </div>
 
-          {!token ? (
+          {isLandingRoute ? (
+            <div className="landing-content">
+              <section className="landing-section">
+                <div className="landing-proof-grid">
+                  {LANDING_PROOF_CARDS.map((card) => (
+                    <article className="landing-proof-card" key={card.title}>
+                      <p>{card.eyebrow}</p>
+                      <h3>{card.title}</h3>
+                      <span>{card.text}</span>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="landing-section">
+                <div className="landing-section-head">
+                  <p className="eyebrow">Capacidades demonstradas</p>
+                  <h3>O que este projeto prova tecnicamente</h3>
+                </div>
+                <div className="landing-capability-grid">
+                  {LANDING_ENGINEERING_CARDS.map((item) => (
+                    <article className="landing-capability-card" key={item.title}>
+                      <h4>{item.title}</h4>
+                      <p>{item.text}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="landing-section">
+                <div className="landing-section-head">
+                  <p className="eyebrow">Arquitetura</p>
+                  <h3>Pipeline desenhado para uso real</h3>
+                </div>
+                <div className="landing-architecture-grid">
+                  {LANDING_ARCHITECTURE.map((item) => (
+                    <article className="landing-architecture-card" key={item.step}>
+                      <strong>{item.step}</strong>
+                      <h4>{item.title}</h4>
+                      <p>{item.text}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              
+
+              <section className="landing-band">
+                <article className="landing-band-card">
+                  <p className="eyebrow">Stack</p>
+                  <h3>Ferramentas e decisões de implementação</h3>
+                  <div className="tech-chips">
+                    {LANDING_STACK.map((item) => (
+                      <span className="tech-chip" key={item}>
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="landing-band-card">
+                  <p className="eyebrow">Saídas do produto</p>
+                  <h3>O que o usuário recebe ao final</h3>
+                  <div className="landing-output-list">
+                    {LANDING_OUTPUTS.map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                  </div>
+                </article>
+              </section>
+
+              <section className="landing-cta">
+                <p className="eyebrow">Experimente o projeto</p>
+                <h3>Crie uma conta e percorra o fluxo completo.</h3>
+                <p>
+                  A aplicação é gratuita e foi pensada para servir como uma vitrine prática das minhas
+                  habilidades técnicas.
+                </p>
+                <div className="hero-actions">
+                  <button className="btn" type="button" onClick={() => handleLandingAuth('register')}>
+                    Abrir cadastro
+                  </button>
+                  <button className="btn btn-ghost hero-btn-alt" type="button" onClick={() => handleLandingAuth('login')}>
+                    Já tenho conta
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : !token ? (
             <div className="empty-state">
               <h3>Faça login para começar</h3>
-              <p>1. Crie conta ou entre.</p>
+              <p>1. Entre ou crie sua conta.</p>
               <p>2. Cadastre sua chave OpenAI.</p>
-              <p>3. Envie um vídeo para análise.</p>
+              <p>3. Envie um vídeo em <code>/app</code> para análise.</p>
             </div>
           ) : !hasOpenAiKey ? (
             <div className="empty-state">
