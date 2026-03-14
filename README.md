@@ -1,6 +1,19 @@
 # Analise de Reuniao
 
-Aplicacao para upload de videos de reunioes, transcricao com OpenAI e follow-up em formato de chat. O projeto usa modelo BYOK: cada usuario cadastra a propria chave OpenAI, e o backend faz as chamadas ao provedor sem expor o segredo no frontend. Os videos sao processados temporariamente durante o upload e descartados ao final da analise.
+Aplicacao de analise de reunioes com Flask + React no modelo BYOK: cada usuario cadastra a propria chave OpenAI, o backend faz as chamadas ao provedor sem expor segredo no frontend, e os videos sao processados temporariamente durante o upload e descartados ao final da analise.
+
+## Status
+
+Projeto pronto para portfolio tecnico e publicacao como servico unico.
+
+O que este build ja demonstra:
+
+- autenticacao com hash de senha e politica minima
+- integracao OpenAI em modo BYOK
+- upload, transcricao, analise inicial e follow-up
+- persistencia local com SQLite e trilha de uso
+- testes automatizados cobrindo o backend
+- frontend buildado e servivel pelo proprio Flask
 
 ## Stack
 
@@ -12,12 +25,35 @@ Aplicacao para upload de videos de reunioes, transcricao com OpenAI e follow-up 
 
 ## Como funciona
 
-- `frontend` roda em `http://localhost:5173`
-- `backend` roda em `http://localhost:5000`
-- Em desenvolvimento, o Flask fica como API apenas
-- O upload ja dispara a analise automaticamente
-- O backend nao persiste os videos enviados
-- Login, cadastro, chave OpenAI, upload, analise e follow-up passam pelo backend
+- em desenvolvimento, o frontend roda em `http://localhost:5173`
+- a API Flask roda em `http://localhost:5000`
+- em producao, o Flask pode servir o build do frontend na mesma aplicacao
+- o upload ja dispara a analise automaticamente
+- o backend nao persiste os videos enviados
+- login, cadastro, chave OpenAI, upload, analise e follow-up passam pelo backend
+
+## Publicacao Em Servico Unico
+
+Se a ideia e publicar sem separar frontend e backend em dois servicos, este repositorio ja suporta esse modo.
+
+Fluxo recomendado de deploy:
+
+1. gerar o build do frontend
+2. manter `SERVE_FRONTEND_FROM_FLASK=1`
+3. publicar apenas o servico Flask
+
+Build local para esse modo:
+
+```bash
+npm --prefix frontend run build
+python app.py
+```
+
+Nesse modo:
+
+- o Flask serve `frontend/dist`
+- o frontend usa mesma origem da API
+- voce nao precisa publicar um servico separado para o Vite
 
 ## Pre-requisitos
 
@@ -44,8 +80,8 @@ Copy-Item .env.example .env
 
 - `SECRET_KEY`
 - `KEY_ENCRYPTION_MASTER_KEY`
-- `SERVE_FRONTEND_FROM_FLASK=0` para desenvolvimento
-- `MAX_FILE_SIZE_MB` conforme o limite desejado
+- `MAX_FILE_SIZE_MB`
+- `SERVE_FRONTEND_FROM_FLASK`
 
 Para gerar `KEY_ENCRYPTION_MASTER_KEY`:
 
@@ -110,7 +146,7 @@ O frontend ficara em `http://localhost:5173`.
 
 ## Fluxo de uso
 
-1. Abra `http://localhost:5173`
+1. Abra `http://localhost:5173` em dev ou a raiz do Flask em deploy unico
 2. Crie uma conta ou faca login
 3. Cadastre a chave OpenAI em `Conta e integracao`
 4. Envie um video
@@ -134,20 +170,6 @@ pytest
 
 O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term-missing`.
 
-## Variaveis importantes
-
-- `SERVE_FRONTEND_FROM_FLASK`
-  - `0`: modo desenvolvimento recomendado, com frontend separado no Vite
-  - `1`: Flask tambem serve o frontend buildado
-- `MAX_FILE_SIZE_MB`: limite de upload por arquivo
-- `OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB`: limite por parte enviado para transcricao na OpenAI. O provedor aceita no maximo `25`
-- `MAX_VIDEO_DURATION_SECONDS`: duracao maxima permitida
-- `PASSWORD_MIN_LENGTH`: politica minima de senha
-- `REDIS_URL`: habilita cache/sessoes em Redis quando configurado
-- `OPENAI_CHAT_MODEL`
-- `OPENAI_TRANSCRIPTION_MODEL`
-- `OPENAI_API_BASE_URL`
-
 ## Endpoints principais
 
 - `POST /auth/register`
@@ -162,35 +184,51 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 - `GET /usage/dashboard`
 - `GET /health`
 
-## Producao simples
+## Seguranca de credenciais
 
-Se quiser servir o frontend pelo Flask:
+- nunca commite `.env`, chaves reais da OpenAI ou segredos de deploy
+- use sempre `.env.example` como template
+- rotacione `SECRET_KEY`, `KEY_ENCRYPTION_MASTER_KEY` e chaves OpenAI se houver exposicao
+- em producao, prefira armazenar segredos no painel do provedor e nao no repositorio
+- o frontend nao deve exibir a chave completa depois do cadastro
 
-1. Gere o build:
+## Custos e limites
 
-```bash
-cd frontend
-npm run build
-```
+- este projeto usa modelo BYOK: o custo da OpenAI fica na conta do usuario final
+- transcricao e chat dependem de credito, limite e status da chave cadastrada
+- `OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB` nao deve ultrapassar `25`
+- uploads longos e modelos maiores podem aumentar latencia e custo
 
-2. No `.env`, defina:
+## Limitacoes conhecidas
 
-```env
-SERVE_FRONTEND_FROM_FLASK=1
-```
+- depende de `ffmpeg` e `ffprobe` instalados no ambiente
+- SQLite atende portfolio e uso leve; para escala real, prefira Postgres
+- Redis e opcional; sem ele, parte do comportamento usa fallback local em memoria
+- o preview do video em `/app` e local do navegador, nao servidor
+- a suite automatizada cobre o backend; o frontend ainda nao tem suite dedicada
 
-3. Rode o backend:
+## Roadmap curto
 
-```bash
-python app.py
-```
+- adicionar testes de frontend com Vitest + React Testing Library
+- trocar SQLite por Postgres para ambiente multi-instancia
+- adicionar storage S3-compatible para anexos e artefatos futuros
+- expandir observabilidade com metricas e alertas de uso por usuario
 
-Nesse modo, o Flask tenta servir os arquivos de `frontend/dist`.
+## CI
+
+Existe pipeline simples em GitHub Actions para:
+
+- rodar `pytest`
+- validar o build do frontend
+
+Arquivo: `.github/workflows/ci.yml`
+
+## Licenca
+
+Este projeto esta licenciado sob a licenca MIT. Consulte [LICENSE](LICENSE).
 
 ## Observacoes
 
-- O projeto usa SQLite por padrao em `app.db`
 - Redis e opcional; sem ele o sistema usa fallback local em memoria para parte do comportamento
-- Se o `upload` ou a validacao de video falharem, confira se `ffmpeg` e `ffprobe` estao instalados corretamente
-- O preview de video em `/app` e local do navegador; ele nao depende de arquivo salvo no backend
-- Se a analise retornar `502`, normalmente o problema esta na chave OpenAI, credito, limite ou falha de rede com o provedor
+- se o `upload` ou a validacao de video falharem, confira se `ffmpeg` e `ffprobe` estao instalados corretamente
+- se a analise retornar `502`, normalmente o problema esta na chave OpenAI, credito, limite ou falha de rede com o provedor

@@ -11,9 +11,7 @@ export default defineConfig({
       '/health': 'http://localhost:5000',
       '/usage': 'http://localhost:5000',
       '/upload': 'http://localhost:5000',
-      '/analyze': 'http://localhost:5000',
-      '/followup': 'http://localhost:5000',
-      '/video': 'http://localhost:5000'
+      '/followup': 'http://localhost:5000'
     }
   },
   build: {

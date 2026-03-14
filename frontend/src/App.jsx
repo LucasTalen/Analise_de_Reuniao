@@ -50,7 +50,7 @@ const LANDING_METRICS = [
 
 const LANDING_SHOWCASE_LINES = [
   { label: 'Projeto', value: 'Portfolio build / free access' },
-  { label: 'Objetivo', value: 'Mostrar engenharia full-stack aplicada' },
+  { label: 'Objetivo', value: 'Mostrar engenharia backend aplicada' },
   { label: 'Segredo', value: 'OpenAI protegida via backend proxy' },
   { label: 'Diferencial', value: 'BYOK + análise automática de vídeo' }
 ];
@@ -1022,7 +1022,7 @@ function App() {
                 <p className="eyebrow">Projeto autoral • gratuito • portfolio técnico</p>
                 <h1>Transformo vídeos de reunião em decisões, tarefas e follow-up com IA.</h1>
                 <p className="subtitle hero-subtitle-strong">
-                  Esta aplicação existe para mostrar minhas habilidades em produto, arquitetura full-stack,
+                  Esta aplicação existe para mostrar minhas habilidades em produto, arquitetura backend,
                   integração segura com OpenAI e experiência de uso. O usuário entra com a própria chave,
                   o backend protege o segredo e o vídeo já dispara a análise automaticamente.
                 </p>
