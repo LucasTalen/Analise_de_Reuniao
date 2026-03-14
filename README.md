@@ -4,15 +4,14 @@ Aplicacao de analise de reunioes em modelo BYOK: cada usuario cadastra a propria
 
 ## Status
 
-Projeto pronto para portfolio tecnico e publicacao como servico unico.
+Projeto pronto para publicacao.
 
-O que este build demonstra:
+Principais recursos:
 
 - autenticacao com hash de senha, salt e politica minima
 - integracao OpenAI em modo BYOK
 - upload, transcricao, analise inicial e follow-up
 - persistencia em MongoDB com trilha de uso
-- frontend servido diretamente pelo Flask com templates + JS estatico
 - testes automatizados cobrindo o backend
 
 ## Stack
@@ -31,9 +30,7 @@ O que este build demonstra:
 - o backend nao persiste os videos enviados
 - login, cadastro, chave OpenAI, upload, analise e follow-up passam pelo backend
 
-## Publicacao Em Servico Unico
-
-Este repositorio agora roda inteiramente no Flask. Nao existe mais dependencia de React ou Vite para desenvolvimento ou deploy.
+## Publicacao
 
 Fluxo de deploy:
 
