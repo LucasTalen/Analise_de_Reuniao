@@ -1,5 +1,4 @@
 blinker==1.9.0
-alembic==1.16.5
 certifi==2025.4.26
 charset-normalizer==3.4.2
 click==8.2.0
@@ -13,9 +12,9 @@ idna==3.10
 itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.2
+pymongo==4.11.3
 python-dotenv==1.1.0
 redis==6.4.0
 requests==2.32.3
-SQLAlchemy==2.0.43
 urllib3==2.4.0
 Werkzeug==3.1.3

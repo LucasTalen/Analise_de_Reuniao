@@ -5,12 +5,13 @@ import math
 import os
 import re
 import shutil
-import sqlite3
 import tempfile
 import threading
 import time
 import uuid
+from collections import defaultdict
 from functools import wraps
+from urllib.parse import urlparse
 
 import ffmpeg
 import redis
@@ -19,13 +20,23 @@ from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request, send_from_directory
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo.errors import DuplicateKeyError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 ENV_FILE_PATH = os.path.join(BASE_DIR, ".env")
-# Carrega sempre o .env do projeto, sobrescrevendo valores antigos no processo.
-load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+ENV_LOCAL_FILE_PATH = os.path.join(BASE_DIR, ".env.local")
+
+
+def load_project_env():
+    load_dotenv(dotenv_path=ENV_FILE_PATH, override=False)
+    if os.path.exists(ENV_LOCAL_FILE_PATH):
+        load_dotenv(dotenv_path=ENV_LOCAL_FILE_PATH, override=True)
+
+
+load_project_env()
 
 
 class ApiError(Exception):
@@ -84,7 +95,24 @@ app = Flask(__name__)
 SECRET_KEY = require_env("SECRET_KEY")
 app.secret_key = SECRET_KEY
 
-DATABASE_PATH = os.path.abspath(os.getenv("DATABASE_PATH", os.path.join(app.root_path, "app.db")))
+MONGODB_URI = require_env("MONGODB_URI")
+MONGODB_SERVER_SELECTION_TIMEOUT_MS = env_int("MONGODB_SERVER_SELECTION_TIMEOUT_MS", 10000)
+
+
+def resolve_mongodb_db_name():
+    configured_name = os.getenv("MONGODB_DB_NAME", "").strip()
+    if configured_name:
+        return configured_name
+
+    parsed = urlparse(MONGODB_URI)
+    path_name = parsed.path.lstrip("/").strip()
+    if path_name:
+        return path_name
+
+    return "analise_reuniao"
+
+
+MONGODB_DB_NAME = resolve_mongodb_db_name()
 FRONTEND_DIST = os.path.join(app.root_path, "frontend", "dist")
 
 DEFAULT_MAX_FILE_SIZE_MB = 100
@@ -135,7 +163,6 @@ REDIS_PREFIX = os.getenv("REDIS_PREFIX", "meeting_analysis")
 INTERNAL_ADMIN_KEY = os.getenv("INTERNAL_ADMIN_KEY", "").strip()
 USAGE_DASHBOARD_DEFAULT_DAYS = env_int("USAGE_DASHBOARD_DEFAULT_DAYS", 7)
 USAGE_DASHBOARD_MAX_DAYS = env_int("USAGE_DASHBOARD_MAX_DAYS", 90)
-ALEMBIC_HEAD_REVISION = os.getenv("ALEMBIC_HEAD_REVISION", "20260313_0002")
 SERVE_FRONTEND_FROM_FLASK = parse_bool(os.getenv("SERVE_FRONTEND_FROM_FLASK", "0"))
 
 
@@ -204,6 +231,17 @@ def build_redis_client():
 REDIS_CLIENT = build_redis_client()
 
 
+def build_mongo_client():
+    return MongoClient(
+        MONGODB_URI,
+        serverSelectionTimeoutMS=MONGODB_SERVER_SELECTION_TIMEOUT_MS,
+    )
+
+
+MONGO_CLIENT = build_mongo_client()
+MONGO_DB = MONGO_CLIENT[MONGODB_DB_NAME]
+
+
 def now_ts():
     return int(time.time())
 
@@ -215,107 +253,77 @@ def error_response(status_code, message, code):
 @app.before_request
 def refresh_runtime_limits():
     # Permite refletir ajustes de .env sem reiniciar o processo em ambiente de dev.
-    load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+    load_project_env()
     app.config["MAX_CONTENT_LENGTH"] = current_max_file_size_bytes()
 
 
 def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DATABASE_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
+    return MONGO_DB
 
 
 @app.teardown_appcontext
 def close_db(_error):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+    return None
 
 
 def init_db():
-    db = sqlite3.connect(DATABASE_PATH)
-    db.execute("PRAGMA foreign_keys = ON")
-    db.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active'
-        );
-
-        CREATE TABLE IF NOT EXISTS user_api_keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            provider TEXT NOT NULL,
-            key_ciphertext TEXT NOT NULL,
-            key_last4 TEXT NOT NULL,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            created_at INTEGER NOT NULL,
-            rotated_at INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_api_keys_active
-            ON user_api_keys(user_id, provider)
-            WHERE is_active = 1;
-
-        CREATE TABLE IF NOT EXISTS analysis_sessions (
-            id TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            source_label TEXT NOT NULL,
-            transcription_json TEXT NOT NULL,
-            history_json TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            expires_at INTEGER NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_analysis_sessions_user
-            ON analysis_sessions(user_id, status, updated_at);
-
-        CREATE TABLE IF NOT EXISTS usage_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            session_id TEXT,
-            endpoint TEXT NOT NULL,
-            model TEXT,
-            input_tokens INTEGER,
-            output_tokens INTEGER,
-            estimated_cost REAL,
-            http_status INTEGER NOT NULL,
-            created_at INTEGER NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(session_id) REFERENCES analysis_sessions(id) ON DELETE SET NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_usage_events_user
-            ON usage_events(user_id, created_at DESC);
-        """
+    db = get_db()
+    db.users.create_index([("email", ASCENDING)], unique=True)
+    db.user_api_keys.create_index(
+        [("user_id", ASCENDING), ("provider", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"is_active": True},
     )
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS alembic_version (
-            version_num VARCHAR(32) NOT NULL PRIMARY KEY
-        )
-        """
+    db.analysis_sessions.create_index(
+        [("user_id", ASCENDING), ("status", ASCENDING), ("updated_at", DESCENDING)]
     )
-    analysis_session_columns = {
-        row[1]
-        for row in db.execute("PRAGMA table_info(analysis_sessions)").fetchall()
+    db.analysis_sessions.create_index([("expires_at", ASCENDING)])
+    db.usage_events.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+
+
+def users_collection():
+    return get_db().users
+
+
+def user_api_keys_collection():
+    return get_db().user_api_keys
+
+
+def analysis_sessions_collection():
+    return get_db().analysis_sessions
+
+
+def usage_events_collection():
+    return get_db().usage_events
+
+
+def normalize_user_document(document):
+    if document is None:
+        return None
+
+    return {
+        "id": str(document["_id"]),
+        "email": document["email"],
+        "password_hash": document.get("password_hash"),
+        "status": document.get("status", "active"),
+        "created_at": int(document.get("created_at", 0)),
     }
-    if "video_path" in analysis_session_columns and "source_label" not in analysis_session_columns:
-        db.execute("ALTER TABLE analysis_sessions RENAME COLUMN video_path TO source_label")
-    current_version = db.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
-    if current_version is None:
-        db.execute("INSERT INTO alembic_version (version_num) VALUES (?)", (ALEMBIC_HEAD_REVISION,))
-    db.commit()
-    db.close()
+
+
+def normalize_api_key_document(document):
+    if document is None:
+        return None
+
+    return {
+        "id": str(document["_id"]),
+        "user_id": str(document["user_id"]),
+        "provider": document["provider"],
+        "key_ciphertext": document["key_ciphertext"],
+        "key_last4": document["key_last4"],
+        "is_active": bool(document.get("is_active", False)),
+        "created_at": int(document.get("created_at", 0)),
+        "rotated_at": int(document.get("rotated_at") or document.get("created_at", 0)),
+    }
 
 
 def normalize_email(value):
@@ -399,23 +407,24 @@ def decode_auth_token(token):
     if not user_id:
         raise ApiError(401, "Token de autenticacao invalido.", "invalid_token")
 
-    return int(user_id)
+    return str(user_id)
 
 
 def get_user_by_id(user_id):
-    db = get_db()
-    return db.execute(
-        "SELECT id, email, status, created_at FROM users WHERE id = ? LIMIT 1",
-        (user_id,)
-    ).fetchone()
+    document = users_collection().find_one({"_id": str(user_id)})
+    user = normalize_user_document(document)
+    if user is None:
+        return None
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "status": user["status"],
+        "created_at": user["created_at"],
+    }
 
 
 def get_user_by_email(email):
-    db = get_db()
-    return db.execute(
-        "SELECT id, email, password_hash, status FROM users WHERE email = ? LIMIT 1",
-        (email,)
-    ).fetchone()
+    return normalize_user_document(users_collection().find_one({"email": email}))
 
 
 def require_auth(handler=None, *, allow_query_token=False):
@@ -439,7 +448,7 @@ def require_auth(handler=None, *, allow_query_token=False):
                 raise ApiError(403, "Acesso negado para esta conta.", "forbidden")
 
             g.current_user = {
-                "id": int(user["id"]),
+                "id": user["id"],
                 "email": user["email"]
             }
             return fn(*args, **kwargs)
@@ -491,64 +500,63 @@ def validate_openai_api_key(api_key):
 
 
 def set_active_openai_key_for_user(user_id, api_key):
-    db = get_db()
     current_time = now_ts()
     ciphertext = encrypt_api_key(api_key)
     key_last4 = api_key[-4:]
-
-    db.execute(
-        """
-        UPDATE user_api_keys
-           SET is_active = 0,
-               rotated_at = ?
-         WHERE user_id = ?
-           AND provider = 'openai'
-           AND is_active = 1
-        """,
-        (current_time, user_id)
+    user_api_keys_collection().update_many(
+        {
+            "user_id": str(user_id),
+            "provider": "openai",
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "is_active": False,
+                "rotated_at": current_time,
+            }
+        },
     )
-    db.execute(
-        """
-        INSERT INTO user_api_keys (
-            user_id, provider, key_ciphertext, key_last4, is_active, created_at, rotated_at
-        ) VALUES (?, 'openai', ?, ?, 1, ?, ?)
-        """,
-        (user_id, ciphertext, key_last4, current_time, current_time)
+    user_api_keys_collection().insert_one(
+        {
+            "_id": str(uuid.uuid4()),
+            "user_id": str(user_id),
+            "provider": "openai",
+            "key_ciphertext": ciphertext,
+            "key_last4": key_last4,
+            "is_active": True,
+            "created_at": current_time,
+            "rotated_at": current_time,
+        }
     )
-    db.commit()
 
 
 def revoke_openai_key(user_id):
-    db = get_db()
     current_time = now_ts()
-    db.execute(
-        """
-        UPDATE user_api_keys
-           SET is_active = 0,
-               rotated_at = ?
-         WHERE user_id = ?
-           AND provider = 'openai'
-           AND is_active = 1
-        """,
-        (current_time, user_id)
+    user_api_keys_collection().update_many(
+        {
+            "user_id": str(user_id),
+            "provider": "openai",
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "is_active": False,
+                "rotated_at": current_time,
+            }
+        },
     )
-    db.commit()
 
 
 def get_active_openai_key_row(user_id):
-    db = get_db()
-    return db.execute(
-        """
-        SELECT id, key_ciphertext, key_last4, created_at, rotated_at
-          FROM user_api_keys
-         WHERE user_id = ?
-           AND provider = 'openai'
-           AND is_active = 1
-         ORDER BY created_at DESC
-         LIMIT 1
-        """,
-        (user_id,)
-    ).fetchone()
+    document = user_api_keys_collection().find_one(
+        {
+            "user_id": str(user_id),
+            "provider": "openai",
+            "is_active": True,
+        },
+        sort=[("created_at", DESCENDING)],
+    )
+    return normalize_api_key_document(document)
 
 
 def get_active_openai_key_or_error(user_id):
@@ -559,33 +567,23 @@ def get_active_openai_key_or_error(user_id):
 
 
 def cleanup_expired_analysis_sessions():
-    db = get_db()
     current_time = now_ts()
     expired_ids = []
+    sessions = analysis_sessions_collection()
 
     if REDIS_CLIENT is not None:
-        rows = db.execute(
-            """
-            SELECT id
-              FROM analysis_sessions
-             WHERE status = 'active'
-               AND expires_at <= ?
-            """,
-            (current_time,)
-        ).fetchall()
-        expired_ids = [row["id"] for row in rows]
+        expired_ids = [
+            str(document["_id"])
+            for document in sessions.find(
+                {"status": "active", "expires_at": {"$lte": current_time}},
+                {"_id": 1},
+            )
+        ]
 
-    db.execute(
-        """
-        UPDATE analysis_sessions
-           SET status = 'expired',
-               updated_at = ?
-         WHERE status = 'active'
-           AND expires_at <= ?
-        """,
-        (current_time, current_time)
+    sessions.update_many(
+        {"status": "active", "expires_at": {"$lte": current_time}},
+        {"$set": {"status": "expired", "updated_at": current_time}},
     )
-    db.commit()
 
     for analysis_id in expired_ids:
         invalidate_cached_analysis_session(analysis_id)
@@ -598,36 +596,29 @@ def create_analysis_session(user_id, source_label, segments, history):
     current_time = now_ts()
     expires_at = current_time + ANALYSIS_SESSION_TTL_SECONDS
 
-    db = get_db()
-    db.execute(
-        """
-        INSERT INTO analysis_sessions (
-            id, user_id, source_label, transcription_json, history_json,
-            status, created_at, updated_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
-        """,
-        (
-            analysis_id,
-            user_id,
-            source_label,
-            json.dumps(segments, ensure_ascii=False),
-            json.dumps(history, ensure_ascii=False),
-            current_time,
-            current_time,
-            expires_at
-        )
+    analysis_sessions_collection().insert_one(
+        {
+            "_id": analysis_id,
+            "user_id": str(user_id),
+            "source_label": source_label,
+            "segments": segments,
+            "history": history,
+            "status": "active",
+            "created_at": current_time,
+            "updated_at": current_time,
+            "expires_at": expires_at,
+        }
     )
-    db.commit()
 
     cache_analysis_session(
         analysis_id,
         {
             "id": analysis_id,
-            "user_id": int(user_id),
+            "user_id": str(user_id),
             "source_label": source_label,
             "segments": segments,
             "history": history,
-            "expires_at": int(expires_at)
+            "expires_at": int(expires_at),
         },
         expires_at
     )
@@ -640,69 +631,50 @@ def get_analysis_session(user_id, analysis_id):
 
     cached = get_cached_analysis_session(analysis_id)
     if cached is not None:
-        if int(cached.get("user_id", -1)) != int(user_id):
+        if str(cached.get("user_id", "")) != str(user_id):
             raise ApiError(403, "Sem permissao para acessar essa sessao.", "forbidden")
         return cached
 
-    db = get_db()
-    row = db.execute(
-        """
-        SELECT id, user_id, source_label, transcription_json, history_json, status,
-               created_at, updated_at, expires_at
-          FROM analysis_sessions
-         WHERE id = ?
-           AND user_id = ?
-           AND status = 'active'
-         LIMIT 1
-        """,
-        (analysis_id, user_id)
-    ).fetchone()
+    row = analysis_sessions_collection().find_one(
+        {
+            "_id": analysis_id,
+            "user_id": str(user_id),
+            "status": "active",
+        }
+    )
 
     if row is None:
         return None
 
     current_time = now_ts()
-    db.execute(
-        "UPDATE analysis_sessions SET updated_at = ? WHERE id = ?",
-        (current_time, analysis_id)
+    analysis_sessions_collection().update_one(
+        {"_id": analysis_id},
+        {"$set": {"updated_at": current_time}},
     )
-    db.commit()
-
-    try:
-        transcription = json.loads(row["transcription_json"])
-    except json.JSONDecodeError:
-        transcription = []
-
-    try:
-        history = json.loads(row["history_json"])
-    except json.JSONDecodeError:
-        history = []
 
     session = {
-        "id": row["id"],
-        "user_id": int(row["user_id"]),
+        "id": str(row["_id"]),
+        "user_id": str(row["user_id"]),
         "source_label": row["source_label"],
-        "segments": transcription,
-        "history": history,
-        "expires_at": int(row["expires_at"])
+        "segments": list(row.get("segments", [])),
+        "history": list(row.get("history", [])),
+        "expires_at": int(row["expires_at"]),
     }
-    cache_analysis_session(row["id"], session, row["expires_at"])
+    cache_analysis_session(session["id"], session, row["expires_at"])
     return session
 
 
 def update_analysis_history(analysis_id, history, expires_at):
     clipped_history = history[-(MAX_HISTORY_MESSAGES * 2):]
-    db = get_db()
-    db.execute(
-        """
-        UPDATE analysis_sessions
-           SET history_json = ?,
-               updated_at = ?
-         WHERE id = ?
-        """,
-        (json.dumps(clipped_history, ensure_ascii=False), now_ts(), analysis_id)
+    analysis_sessions_collection().update_one(
+        {"_id": analysis_id},
+        {
+            "$set": {
+                "history": clipped_history,
+                "updated_at": now_ts(),
+            }
+        },
     )
-    db.commit()
 
     cached = get_cached_analysis_session(analysis_id)
     if cached is not None:
@@ -730,29 +702,20 @@ def estimate_chat_cost(input_tokens, output_tokens):
 def log_usage_event(user_id, session_id, endpoint, model, usage, http_status):
     input_tokens, output_tokens = extract_usage_tokens(usage)
     estimated_cost = estimate_chat_cost(input_tokens, output_tokens)
-
-    db = get_db()
-    db.execute(
-        """
-        INSERT INTO usage_events (
-            user_id, session_id, endpoint, model,
-            input_tokens, output_tokens, estimated_cost,
-            http_status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            user_id,
-            session_id,
-            endpoint,
-            model,
-            input_tokens,
-            output_tokens,
-            estimated_cost,
-            http_status,
-            now_ts()
-        )
+    usage_events_collection().insert_one(
+        {
+            "_id": str(uuid.uuid4()),
+            "user_id": str(user_id),
+            "session_id": session_id,
+            "endpoint": endpoint,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost": estimated_cost,
+            "http_status": http_status,
+            "created_at": now_ts(),
+        }
     )
-    db.commit()
 
 
 def safe_log_usage_event(user_id, session_id, endpoint, model, usage, http_status):
@@ -1089,8 +1052,8 @@ def json_success(payload):
 
 def is_api_like_path(path):
     normalized = f"/{str(path or '').lstrip('/')}"
-    return normalized in {"/upload", "/analyze", "/followup"} or normalized.startswith(
-        ("/auth/", "/integrations/", "/video/", "/usage/", "/health")
+    return normalized in {"/upload", "/followup"} or normalized.startswith(
+        ("/auth/", "/integrations/", "/usage/", "/health")
     )
 
 
@@ -1108,121 +1071,149 @@ def parse_dashboard_days(raw_value):
 
 
 def get_usage_summary_for_user(user_id, start_ts):
-    db = get_db()
-    row = db.execute(
-        """
-        SELECT COUNT(*) AS requests,
-               COALESCE(SUM(input_tokens), 0) AS input_tokens,
-               COALESCE(SUM(output_tokens), 0) AS output_tokens,
-               COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
-               COALESCE(SUM(CASE WHEN http_status >= 400 THEN 1 ELSE 0 END), 0) AS errors
-          FROM usage_events
-         WHERE user_id = ?
-           AND created_at >= ?
-        """,
-        (user_id, start_ts)
-    ).fetchone()
+    docs = list(
+        usage_events_collection().find(
+            {
+                "user_id": str(user_id),
+                "created_at": {"$gte": start_ts},
+            }
+        )
+    )
 
-    endpoint_rows = db.execute(
-        """
-        SELECT endpoint,
-               COUNT(*) AS requests,
-               COALESCE(SUM(input_tokens), 0) AS input_tokens,
-               COALESCE(SUM(output_tokens), 0) AS output_tokens,
-               COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
-               COALESCE(SUM(CASE WHEN http_status >= 400 THEN 1 ELSE 0 END), 0) AS errors
-          FROM usage_events
-         WHERE user_id = ?
-           AND created_at >= ?
-         GROUP BY endpoint
-         ORDER BY requests DESC
-        """,
-        (user_id, start_ts)
-    ).fetchall()
+    summary = {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "estimated_cost": 0.0,
+        "errors": 0,
+    }
+    by_endpoint_map = defaultdict(
+        lambda: {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost": 0.0,
+            "errors": 0,
+        }
+    )
+    timeline_map = defaultdict(
+        lambda: {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost": 0.0,
+            "errors": 0,
+        }
+    )
 
-    timeline_rows = db.execute(
-        """
-        SELECT strftime('%Y-%m-%d', created_at, 'unixepoch') AS day,
-               COUNT(*) AS requests,
-               COALESCE(SUM(input_tokens), 0) AS input_tokens,
-               COALESCE(SUM(output_tokens), 0) AS output_tokens,
-               COALESCE(SUM(estimated_cost), 0) AS estimated_cost,
-               COALESCE(SUM(CASE WHEN http_status >= 400 THEN 1 ELSE 0 END), 0) AS errors
-          FROM usage_events
-         WHERE user_id = ?
-           AND created_at >= ?
-         GROUP BY day
-         ORDER BY day ASC
-        """,
-        (user_id, start_ts)
-    ).fetchall()
+    for doc in docs:
+        input_tokens = int(doc.get("input_tokens") or 0)
+        output_tokens = int(doc.get("output_tokens") or 0)
+        estimated_cost = float(doc.get("estimated_cost") or 0)
+        is_error = int((doc.get("http_status") or 0) >= 400)
+        endpoint = str(doc.get("endpoint") or "unknown")
+        day = time.strftime("%Y-%m-%d", time.gmtime(int(doc.get("created_at") or 0)))
+
+        summary["requests"] += 1
+        summary["input_tokens"] += input_tokens
+        summary["output_tokens"] += output_tokens
+        summary["estimated_cost"] += estimated_cost
+        summary["errors"] += is_error
+
+        endpoint_bucket = by_endpoint_map[endpoint]
+        endpoint_bucket["requests"] += 1
+        endpoint_bucket["input_tokens"] += input_tokens
+        endpoint_bucket["output_tokens"] += output_tokens
+        endpoint_bucket["estimated_cost"] += estimated_cost
+        endpoint_bucket["errors"] += is_error
+
+        timeline_bucket = timeline_map[day]
+        timeline_bucket["requests"] += 1
+        timeline_bucket["input_tokens"] += input_tokens
+        timeline_bucket["output_tokens"] += output_tokens
+        timeline_bucket["estimated_cost"] += estimated_cost
+        timeline_bucket["errors"] += is_error
 
     return {
         "summary": {
-            "requests": int(row["requests"] or 0),
-            "input_tokens": int(row["input_tokens"] or 0),
-            "output_tokens": int(row["output_tokens"] or 0),
-            "estimated_cost": float(row["estimated_cost"] or 0),
-            "errors": int(row["errors"] or 0)
+            "requests": int(summary["requests"]),
+            "input_tokens": int(summary["input_tokens"]),
+            "output_tokens": int(summary["output_tokens"]),
+            "estimated_cost": round(float(summary["estimated_cost"]), 6),
+            "errors": int(summary["errors"]),
         },
-        "by_endpoint": [
-            {
-                "endpoint": endpoint_row["endpoint"],
-                "requests": int(endpoint_row["requests"] or 0),
-                "input_tokens": int(endpoint_row["input_tokens"] or 0),
-                "output_tokens": int(endpoint_row["output_tokens"] or 0),
-                "estimated_cost": float(endpoint_row["estimated_cost"] or 0),
-                "errors": int(endpoint_row["errors"] or 0)
-            }
-            for endpoint_row in endpoint_rows
-        ],
-        "timeline": [
-            {
-                "day": timeline_row["day"],
-                "requests": int(timeline_row["requests"] or 0),
-                "input_tokens": int(timeline_row["input_tokens"] or 0),
-                "output_tokens": int(timeline_row["output_tokens"] or 0),
-                "estimated_cost": float(timeline_row["estimated_cost"] or 0),
-                "errors": int(timeline_row["errors"] or 0)
-            }
-            for timeline_row in timeline_rows
-        ]
+        "by_endpoint": sorted(
+            [
+                {
+                    "endpoint": endpoint,
+                    "requests": int(values["requests"]),
+                    "input_tokens": int(values["input_tokens"]),
+                    "output_tokens": int(values["output_tokens"]),
+                    "estimated_cost": round(float(values["estimated_cost"]), 6),
+                    "errors": int(values["errors"]),
+                }
+                for endpoint, values in by_endpoint_map.items()
+            ],
+            key=lambda item: (-item["requests"], item["endpoint"]),
+        ),
+        "timeline": sorted(
+            [
+                {
+                    "day": day,
+                    "requests": int(values["requests"]),
+                    "input_tokens": int(values["input_tokens"]),
+                    "output_tokens": int(values["output_tokens"]),
+                    "estimated_cost": round(float(values["estimated_cost"]), 6),
+                    "errors": int(values["errors"]),
+                }
+                for day, values in timeline_map.items()
+            ],
+            key=lambda item: item["day"],
+        ),
     }
 
 
 def get_global_usage_top_users(start_ts, limit):
-    db = get_db()
-    rows = db.execute(
-        """
-        SELECT usage_events.user_id AS user_id,
-               users.email AS email,
-               COUNT(*) AS requests,
-               COALESCE(SUM(usage_events.input_tokens), 0) AS input_tokens,
-               COALESCE(SUM(usage_events.output_tokens), 0) AS output_tokens,
-               COALESCE(SUM(usage_events.estimated_cost), 0) AS estimated_cost,
-               COALESCE(SUM(CASE WHEN usage_events.http_status >= 400 THEN 1 ELSE 0 END), 0) AS errors
-          FROM usage_events
-          JOIN users ON users.id = usage_events.user_id
-         WHERE usage_events.created_at >= ?
-         GROUP BY usage_events.user_id, users.email
-         ORDER BY requests DESC
-         LIMIT ?
-        """,
-        (start_ts, limit)
-    ).fetchall()
-
-    return [
-        {
-            "user_id": int(row["user_id"]),
-            "email": row["email"],
-            "requests": int(row["requests"] or 0),
-            "input_tokens": int(row["input_tokens"] or 0),
-            "output_tokens": int(row["output_tokens"] or 0),
-            "estimated_cost": float(row["estimated_cost"] or 0),
-            "errors": int(row["errors"] or 0)
+    docs = list(usage_events_collection().find({"created_at": {"$gte": start_ts}}))
+    users_map = {
+        str(document["_id"]): document.get("email", "")
+        for document in users_collection().find({}, {"email": 1})
+    }
+    grouped = defaultdict(
+        lambda: {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost": 0.0,
+            "errors": 0,
         }
-        for row in rows
-    ]
+    )
+
+    for doc in docs:
+        user_id = str(doc.get("user_id"))
+        bucket = grouped[user_id]
+        bucket["requests"] += 1
+        bucket["input_tokens"] += int(doc.get("input_tokens") or 0)
+        bucket["output_tokens"] += int(doc.get("output_tokens") or 0)
+        bucket["estimated_cost"] += float(doc.get("estimated_cost") or 0)
+        bucket["errors"] += int((doc.get("http_status") or 0) >= 400)
+
+    ranked = sorted(
+        [
+            {
+                "user_id": user_id,
+                "email": users_map.get(user_id, ""),
+                "requests": int(values["requests"]),
+                "input_tokens": int(values["input_tokens"]),
+                "output_tokens": int(values["output_tokens"]),
+                "estimated_cost": round(float(values["estimated_cost"]), 6),
+                "errors": int(values["errors"]),
+            }
+            for user_id, values in grouped.items()
+        ],
+        key=lambda item: (-item["requests"], item["email"]),
+    )
+    return ranked[:limit]
 
 
 @app.route("/auth/register", methods=["POST"])
@@ -1240,20 +1231,20 @@ def auth_register():
     password_hash = hash_password(password)
     created_at = now_ts()
 
-    db = get_db()
     try:
-        cursor = db.execute(
-            """
-            INSERT INTO users (email, password_hash, created_at, status)
-            VALUES (?, ?, ?, 'active')
-            """,
-            (email, password_hash, created_at)
+        user_id = str(uuid.uuid4())
+        users_collection().insert_one(
+            {
+                "_id": user_id,
+                "email": email,
+                "password_hash": password_hash,
+                "created_at": created_at,
+                "status": "active",
+            }
         )
-        db.commit()
-    except sqlite3.IntegrityError as error:
+    except DuplicateKeyError as error:
         raise ApiError(400, "Este email ja esta cadastrado.", "email_already_exists") from error
 
-    user_id = int(cursor.lastrowid)
     token = issue_auth_token(user_id, email)
 
     return json_success({
@@ -1285,17 +1276,15 @@ def auth_login():
         raise ApiError(401, "Email ou senha invalidos.", "invalid_credentials")
 
     if used_legacy_without_pepper or password_hash_needs_upgrade(user["password_hash"]):
-        db = get_db()
-        db.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (hash_password(password), int(user["id"]))
+        users_collection().update_one(
+            {"_id": user["id"]},
+            {"$set": {"password_hash": hash_password(password)}},
         )
-        db.commit()
 
-    token = issue_auth_token(int(user["id"]), user["email"])
+    token = issue_auth_token(user["id"], user["email"])
     return json_success({
         "token": token,
-        "user": {"id": int(user["id"]), "email": user["email"]}
+        "user": {"id": user["id"], "email": user["email"]}
     })
 
 
@@ -1328,8 +1317,7 @@ def health_check():
     db_ok = True
     db_error = ""
     try:
-        db = get_db()
-        db.execute("SELECT 1").fetchone()
+        get_db().list_collection_names()
     except Exception as error:
         db_ok = False
         db_error = str(error)

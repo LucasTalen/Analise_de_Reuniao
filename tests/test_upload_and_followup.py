@@ -24,7 +24,7 @@ def test_upload_processes_transient_file_and_cleans_temp_dir(
     client,
     register_user,
     auth_headers,
-    db_fetchone,
+    collection,
     monkeypatch,
     tmp_path,
 ):
@@ -81,10 +81,7 @@ def test_upload_processes_transient_file_and_cleans_temp_dir(
         content_type="multipart/form-data",
     )
     upload_payload = upload_response.get_json()
-    usage_row = db_fetchone(
-        "SELECT endpoint, http_status, model, input_tokens, output_tokens FROM usage_events WHERE user_id = ?",
-        (user_id,),
-    )
+    usage_row = collection("usage_events").find_one({"user_id": user_id})
 
     assert upload_response.status_code == 200
     assert upload_payload["analysis_id"]
@@ -153,7 +150,7 @@ def test_upload_logs_error_when_analysis_fails(
     client,
     register_user,
     auth_headers,
-    db_fetchone,
+    collection,
     monkeypatch,
 ):
     response, payload = register_user()
@@ -176,10 +173,7 @@ def test_upload_logs_error_when_analysis_fails(
         data={"file": (io.BytesIO(b"fake-video"), "meeting.mp4")},
         content_type="multipart/form-data",
     )
-    usage_row = db_fetchone(
-        "SELECT endpoint, http_status FROM usage_events WHERE user_id = ? ORDER BY id DESC LIMIT 1",
-        (user_id,),
-    )
+    usage_row = collection("usage_events").find_one({"user_id": user_id}, sort=[("created_at", -1)])
 
     assert upload_response.status_code == 502
     assert upload_response.get_json()["code"] == "provider_failure"
@@ -193,7 +187,7 @@ def test_followup_updates_history_and_logs_usage(
     register_user,
     auth_headers,
     activate_openai_key,
-    db_fetchone,
+    collection,
     monkeypatch,
 ):
     response, payload = register_user()
@@ -225,18 +219,15 @@ def test_followup_updates_history_and_logs_usage(
         json={"analysis_id": analysis_id, "question": "Quais são os próximos passos?"},
     )
     followup_payload = followup_response.get_json()
-    session_row = db_fetchone(
-        "SELECT history_json FROM analysis_sessions WHERE id = ?",
-        (analysis_id,),
-    )
-    usage_row = db_fetchone(
-        "SELECT endpoint, model, http_status FROM usage_events WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-        (analysis_id,),
-    )
+    session_row = collection("analysis_sessions").find_one({"_id": analysis_id})
+    usage_row = collection("usage_events").find_one({"session_id": analysis_id}, sort=[("created_at", -1)])
 
     assert followup_response.status_code == 200
     assert "Resposta para" in followup_payload["answer"]
-    assert "Quais são os próximos passos?" in session_row["history_json"]
+    assert any(
+        item["role"] == "user" and item["content"] == "Quais são os próximos passos?"
+        for item in session_row["history"]
+    )
     assert usage_row["endpoint"] == "/followup"
     assert usage_row["model"] == "gpt-followup"
     assert usage_row["http_status"] == 200
@@ -248,7 +239,7 @@ def test_followup_validates_input_and_handles_provider_failure(
     register_user,
     auth_headers,
     activate_openai_key,
-    db_fetchone,
+    collection,
     monkeypatch,
 ):
     response, payload = register_user(email="followup@example.com")
@@ -293,10 +284,7 @@ def test_followup_validates_input_and_handles_provider_failure(
         headers=auth_headers(token),
         json={"analysis_id": analysis_id, "question": "Teste erro"},
     )
-    usage_row = db_fetchone(
-        "SELECT endpoint, http_status FROM usage_events WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-        (analysis_id,),
-    )
+    usage_row = collection("usage_events").find_one({"session_id": analysis_id}, sort=[("created_at", -1)])
 
     assert missing_id_response.status_code == 400
     assert missing_id_response.get_json()["code"] == "missing_analysis_id"

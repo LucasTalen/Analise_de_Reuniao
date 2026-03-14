@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import importlib
-import sqlite3
 import sys
 from pathlib import Path
 
+import mongomock
+import pymongo
 import pytest
 from cryptography.fernet import Fernet
 
@@ -18,9 +19,11 @@ def app_module(tmp_path, monkeypatch):
     import dotenv
 
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: True)
+    monkeypatch.setattr(pymongo, "MongoClient", mongomock.MongoClient)
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("KEY_ENCRYPTION_MASTER_KEY", Fernet.generate_key().decode())
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setenv("MONGODB_DB_NAME", f"test_db_{uuid_suffix(tmp_path)}")
     monkeypatch.setenv("SERVE_FRONTEND_FROM_FLASK", "0")
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setenv("PASSWORD_PEPPER", "pepper-for-tests")
@@ -42,6 +45,7 @@ def app_module(tmp_path, monkeypatch):
     yield module
 
     module.rate_limit_buckets.clear()
+    module.MONGO_CLIENT.close()
     sys.modules.pop("app", None)
 
 
@@ -75,31 +79,21 @@ def register_user(client, strong_password):
     return _register
 
 
-@pytest.fixture
-def db_fetchall(app_module):
-    def _fetchall(query: str, params: tuple = ()):
-        conn = sqlite3.connect(app_module.DATABASE_PATH)
-        conn.row_factory = sqlite3.Row
-        try:
-            return conn.execute(query, params).fetchall()
-        finally:
-            conn.close()
-
-    return _fetchall
+def uuid_suffix(tmp_path):
+    return str(abs(hash(str(tmp_path)))).replace("-", "")
 
 
 @pytest.fixture
-def db_fetchone(db_fetchall):
-    def _fetchone(query: str, params: tuple = ()):
-        rows = db_fetchall(query, params)
-        return rows[0] if rows else None
+def collection(app_module):
+    def _collection(name: str):
+        return app_module.get_db()[name]
 
-    return _fetchone
+    return _collection
 
 
 @pytest.fixture
 def activate_openai_key(app_module):
-    def _activate(user_id: int, api_key: str = "sk-test-1234567890"):
+    def _activate(user_id: str, api_key: str = "sk-test-1234567890"):
         with app_module.app.app_context():
             app_module.set_active_openai_key_for_user(user_id, api_key)
         return api_key

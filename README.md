@@ -11,7 +11,7 @@ O que este build ja demonstra:
 - autenticacao com hash de senha e politica minima
 - integracao OpenAI em modo BYOK
 - upload, transcricao, analise inicial e follow-up
-- persistencia local com SQLite e trilha de uso
+- persistencia em MongoDB com trilha de uso
 - testes automatizados cobrindo o backend
 - frontend buildado e servivel pelo proprio Flask
 
@@ -19,7 +19,7 @@ O que este build ja demonstra:
 
 - Backend: Flask
 - Frontend: React + Vite
-- Banco local: SQLite
+- Banco: MongoDB
 - Cache opcional: Redis
 - Video/transcricao: `ffmpeg` + OpenAI
 
@@ -80,8 +80,11 @@ Copy-Item .env.example .env
 
 - `SECRET_KEY`
 - `KEY_ENCRYPTION_MASTER_KEY`
+- `MONGODB_URI`
 - `MAX_FILE_SIZE_MB`
 - `SERVE_FRONTEND_FROM_FLASK`
+
+Se quiser separar segredos locais sem mexer no `.env`, voce tambem pode criar `.env.local`. O backend carrega `.env` primeiro e depois `.env.local`, sobrescrevendo o que estiver duplicado.
 
 Para gerar `KEY_ENCRYPTION_MASTER_KEY`:
 
@@ -121,12 +124,6 @@ python app.py
 
 O backend ficara em `http://localhost:5000`.
 
-Se o banco local ja existir e voce quiser alinhar o schema explicitamente com as revisoes Alembic:
-
-```bash
-alembic upgrade head
-```
-
 ### Frontend
 
 1. Instale as dependencias:
@@ -165,7 +162,7 @@ pip install -r requirements-dev.txt
 Rode a suite com cobertura:
 
 ```bash
-pytest
+python -m pytest
 ```
 
 O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term-missing`.
@@ -202,7 +199,7 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 ## Limitacoes conhecidas
 
 - depende de `ffmpeg` e `ffprobe` instalados no ambiente
-- SQLite atende portfolio e uso leve; para escala real, prefira Postgres
+- depende de um MongoDB acessivel pela `MONGODB_URI`
 - Redis e opcional; sem ele, parte do comportamento usa fallback local em memoria
 - o preview do video em `/app` e local do navegador, nao servidor
 - a suite automatizada cobre o backend; o frontend ainda nao tem suite dedicada
@@ -210,7 +207,7 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 ## Roadmap curto
 
 - adicionar testes de frontend com Vitest + React Testing Library
-- trocar SQLite por Postgres para ambiente multi-instancia
+- adicionar colecoes TTL/observabilidade mais avancadas no MongoDB
 - adicionar storage S3-compatible para anexos e artefatos futuros
 - expandir observabilidade com metricas e alertas de uso por usuario
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from werkzeug.security import generate_password_hash
 
 
-def test_register_hashes_password_and_returns_token(register_user, db_fetchone, strong_password):
+def test_register_hashes_password_and_returns_token(register_user, collection, strong_password):
     response, payload = register_user(password=strong_password)
 
     assert response.status_code == 200
@@ -11,7 +11,7 @@ def test_register_hashes_password_and_returns_token(register_user, db_fetchone, 
     assert payload["token"]
     assert payload["user"]["email"] == "user@example.com"
 
-    user_row = db_fetchone("SELECT email, password_hash FROM users WHERE email = ?", ("user@example.com",))
+    user_row = collection("users").find_one({"email": "user@example.com"})
     assert user_row is not None
     assert user_row["email"] == "user@example.com"
     assert user_row["password_hash"] != strong_password
@@ -40,7 +40,7 @@ def test_login_rejects_invalid_password(client, register_user):
     assert payload["code"] == "invalid_credentials"
 
 
-def test_login_upgrades_legacy_hash_without_pepper(app_module, client, db_fetchone, strong_password):
+def test_login_upgrades_legacy_hash_without_pepper(app_module, client, collection, strong_password):
     legacy_hash = generate_password_hash(
         strong_password,
         method=app_module.PASSWORD_HASH_METHOD,
@@ -48,19 +48,22 @@ def test_login_upgrades_legacy_hash_without_pepper(app_module, client, db_fetcho
     )
 
     with app_module.app.app_context():
-        db = app_module.get_db()
-        db.execute(
-            "INSERT INTO users (email, password_hash, created_at, status) VALUES (?, ?, ?, 'active')",
-            ("legacy@example.com", legacy_hash, app_module.now_ts()),
+        collection("users").insert_one(
+            {
+                "_id": "legacy-user",
+                "email": "legacy@example.com",
+                "password_hash": legacy_hash,
+                "created_at": app_module.now_ts(),
+                "status": "active",
+            }
         )
-        db.commit()
 
     response = client.post(
         "/auth/login",
         json={"email": "legacy@example.com", "password": strong_password},
     )
     payload = response.get_json()
-    upgraded_row = db_fetchone("SELECT password_hash FROM users WHERE email = ?", ("legacy@example.com",))
+    upgraded_row = collection("users").find_one({"email": "legacy@example.com"})
 
     assert response.status_code == 200
     assert payload["token"]
@@ -104,9 +107,8 @@ def test_login_forbidden_for_inactive_user(app_module, client, register_user, st
     register_user(email="inactive@example.com")
 
     with app_module.app.app_context():
-        db = app_module.get_db()
-        db.execute("UPDATE users SET status = 'disabled' WHERE email = ?", ("inactive@example.com",))
-        db.commit()
+        collection = app_module.get_db()["users"]
+        collection.update_one({"email": "inactive@example.com"}, {"$set": {"status": "disabled"}})
 
     response = client.post(
         "/auth/login",
@@ -122,7 +124,7 @@ def test_openai_key_lifecycle_masks_rotates_and_revokes(
     client,
     register_user,
     auth_headers,
-    db_fetchall,
+    collection,
     monkeypatch,
 ):
     response, payload = register_user()
@@ -148,13 +150,7 @@ def test_openai_key_lifecycle_masks_rotates_and_revokes(
     status_response = client.get("/integrations/openai-key/status", headers=auth_headers(token))
     delete_response = client.delete("/integrations/openai-key", headers=auth_headers(token))
     post_delete_status = client.get("/integrations/openai-key/status", headers=auth_headers(token))
-    key_rows = db_fetchall(
-        """
-        SELECT key_last4, is_active
-          FROM user_api_keys
-         ORDER BY id
-        """
-    )
+    key_rows = list(collection("user_api_keys").find({}, {"key_last4": 1, "is_active": 1}).sort("created_at", 1))
 
     assert first_save.status_code == 200
     assert second_save.status_code == 200
@@ -162,7 +158,7 @@ def test_openai_key_lifecycle_masks_rotates_and_revokes(
     assert status_response.get_json()["masked_key"] == "sk-...5678"
     assert delete_response.status_code == 200
     assert post_delete_status.get_json()["is_active"] is False
-    assert [tuple(row) for row in key_rows] == [("1234", 0), ("5678", 0)]
+    assert [(row["key_last4"], int(row["is_active"])) for row in key_rows] == [("1234", 0), ("5678", 0)]
 
 
 def test_openai_key_requires_payload(app_module, client, register_user, auth_headers):

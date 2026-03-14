@@ -119,7 +119,7 @@ const LANDING_ARCHITECTURE = [
 const LANDING_STACK = [
   'Flask API',
   'React + Vite',
-  'SQLite',
+  'MongoDB',
   'Redis opcional',
   'FFmpeg',
   'OpenAI BYOK',

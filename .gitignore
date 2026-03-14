@@ -11,15 +11,9 @@ venv/
 
 # Environment files
 .env
+.env.local
 frontend/.env
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
-
-# Upload artifacts
-uploads/*.mp4
-uploads/*_part*.mp4
-
-# Local database
-app.db
