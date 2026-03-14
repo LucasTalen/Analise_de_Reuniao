@@ -333,13 +333,12 @@ def test_health_reflects_runtime_limits(client, app_module, monkeypatch):
     assert response.status_code == 200
     assert payload["max_file_size_mb"] == 37
     assert payload["max_video_duration_seconds"] == 915
+    assert payload["frontend_mode"] == "flask_templates"
     assert payload["services"]["database"] == "ok"
 
 
-def test_parse_dashboard_days_and_api_path_helpers(app_module):
+def test_parse_dashboard_days(app_module):
     assert app_module.parse_dashboard_days("7") == 7
-    assert app_module.is_api_like_path("/upload") is True
-    assert app_module.is_api_like_path("/qualquer-coisa") is False
 
     with pytest.raises(app_module.ApiError) as error:
         app_module.parse_dashboard_days("0")

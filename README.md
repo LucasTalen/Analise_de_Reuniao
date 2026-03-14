@@ -1,65 +1,51 @@
 # Analise de Reuniao
 
-Aplicacao de analise de reunioes com Flask + React no modelo BYOK: cada usuario cadastra a propria chave OpenAI, o backend faz as chamadas ao provedor sem expor segredo no frontend, e os videos sao processados temporariamente durante o upload e descartados ao final da analise.
+Aplicacao de analise de reunioes em modelo BYOK: cada usuario cadastra a propria chave OpenAI, o backend faz as chamadas ao provedor sem expor segredo no cliente, e os videos sao processados temporariamente durante o upload e descartados ao final da analise.
 
 ## Status
 
 Projeto pronto para portfolio tecnico e publicacao como servico unico.
 
-O que este build ja demonstra:
+O que este build demonstra:
 
-- autenticacao com hash de senha e politica minima
+- autenticacao com hash de senha, salt e politica minima
 - integracao OpenAI em modo BYOK
 - upload, transcricao, analise inicial e follow-up
 - persistencia em MongoDB com trilha de uso
+- frontend servido diretamente pelo Flask com templates + JS estatico
 - testes automatizados cobrindo o backend
-- frontend buildado e servivel pelo proprio Flask
 
 ## Stack
 
 - Backend: Flask
-- Frontend: React + Vite
+- Frontend: Jinja templates + JavaScript estatico
 - Banco: MongoDB
 - Cache opcional: Redis
 - Video/transcricao: `ffmpeg` + OpenAI
 
 ## Como funciona
 
-- em desenvolvimento, o frontend roda em `http://localhost:5173`
-- a API Flask roda em `http://localhost:5000`
-- em producao, o Flask pode servir o build do frontend na mesma aplicacao
+- a landing publica fica em `http://localhost:5000/`
+- a aplicacao real fica em `http://localhost:5000/app`
 - o upload ja dispara a analise automaticamente
 - o backend nao persiste os videos enviados
 - login, cadastro, chave OpenAI, upload, analise e follow-up passam pelo backend
 
 ## Publicacao Em Servico Unico
 
-Se a ideia e publicar sem separar frontend e backend em dois servicos, este repositorio ja suporta esse modo.
+Este repositorio agora roda inteiramente no Flask. Nao existe mais dependencia de React ou Vite para desenvolvimento ou deploy.
 
-Fluxo recomendado de deploy:
+Fluxo de deploy:
 
-1. gerar o build do frontend
-2. manter `SERVE_FRONTEND_FROM_FLASK=1`
-3. publicar apenas o servico Flask
-
-Build local para esse modo:
-
-```bash
-npm --prefix frontend run build
-python app.py
-```
-
-Nesse modo:
-
-- o Flask serve `frontend/dist`
-- o frontend usa mesma origem da API
-- voce nao precisa publicar um servico separado para o Vite
+1. configurar variaveis de ambiente
+2. subir apenas o servico Flask
+3. apontar dominio para a aplicacao Flask
 
 ## Pre-requisitos
 
 - Python 3.11+ ou compativel com as dependencias do projeto
-- Node.js 18+
 - `ffmpeg` e `ffprobe` instalados e disponiveis no `PATH`
+- MongoDB acessivel pela `MONGODB_URI`
 - Redis opcional
 
 ## Configuracao do ambiente
@@ -82,7 +68,6 @@ Copy-Item .env.example .env
 - `KEY_ENCRYPTION_MASTER_KEY`
 - `MONGODB_URI`
 - `MAX_FILE_SIZE_MB`
-- `SERVE_FRONTEND_FROM_FLASK`
 
 Se quiser separar segredos locais sem mexer no `.env`, voce tambem pode criar `.env.local`. O backend carrega `.env` primeiro e depois `.env.local`, sobrescrevendo o que estiver duplicado.
 
@@ -92,9 +77,16 @@ Para gerar `KEY_ENCRYPTION_MASTER_KEY`:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-## Como rodar em desenvolvimento
+Exemplo de `.env.local`:
 
-### Backend
+```env
+MONGODB_URI="mongodb+srv://usuario:senha@cluster.mongodb.net/?retryWrites=true&w=majority"
+MONGODB_DB_NAME=analise_reuniao
+```
+
+Se a URI nao trouxer o nome do banco no path, o app usa `analise_reuniao` por padrao.
+
+## Como rodar
 
 1. Crie e ative um ambiente virtual:
 
@@ -116,40 +108,32 @@ venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-3. Suba a API:
+3. Suba a aplicacao:
 
 ```bash
 python app.py
 ```
 
-O backend ficara em `http://localhost:5000`.
-
-### Frontend
-
-1. Instale as dependencias:
-
-```bash
-cd frontend
-npm install
-```
-
-2. Rode o Vite:
-
-```bash
-npm run dev
-```
-
-O frontend ficara em `http://localhost:5173`.
+A aplicacao ficara em `http://localhost:5000`.
 
 ## Fluxo de uso
 
-1. Abra `http://localhost:5173` em dev ou a raiz do Flask em deploy unico
-2. Crie uma conta ou faca login
-3. Cadastre a chave OpenAI em `Conta e integracao`
-4. Envie um video
-5. A analise comeca automaticamente
-6. O video e descartado do servidor ao fim do processamento
-7. Use o assistente para perguntas adicionais sem reenviar o video
+1. Abra `http://localhost:5000/`
+2. Entre em `/app`
+3. Crie uma conta ou faca login
+4. Cadastre a chave OpenAI em `Conta e integracao`
+5. Envie um video
+6. A analise comeca automaticamente
+7. O video e descartado do servidor ao fim do processamento
+8. Use o assistente para perguntas adicionais sem reenviar o video
+
+## Estrutura relevante
+
+- `app.py`: API, auth, integracoes, upload, analise e renderizacao das paginas HTML
+- `templates/`: landing e aplicacao em Jinja
+- `static/css/app.css`: estilo do frontend
+- `static/js/app.js`: comportamento do frontend
+- `tests/`: suite automatizada
 
 ## Testes
 
@@ -169,6 +153,8 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 
 ## Endpoints principais
 
+- `GET /`
+- `GET /app`
 - `POST /auth/register`
 - `POST /auth/login`
 - `GET /auth/me`
@@ -183,9 +169,9 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 
 ## Seguranca de credenciais
 
-- nunca commite `.env`, chaves reais da OpenAI ou segredos de deploy
+- nunca commite `.env`, `.env.local`, chaves reais da OpenAI ou segredos de deploy
 - use sempre `.env.example` como template
-- rotacione `SECRET_KEY`, `KEY_ENCRYPTION_MASTER_KEY` e chaves OpenAI se houver exposicao
+- rotacione `SECRET_KEY`, `KEY_ENCRYPTION_MASTER_KEY`, `MONGODB_URI` e chaves OpenAI se houver exposicao
 - em producao, prefira armazenar segredos no painel do provedor e nao no repositorio
 - o frontend nao deve exibir a chave completa depois do cadastro
 
@@ -201,12 +187,12 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 - depende de `ffmpeg` e `ffprobe` instalados no ambiente
 - depende de um MongoDB acessivel pela `MONGODB_URI`
 - Redis e opcional; sem ele, parte do comportamento usa fallback local em memoria
-- o preview do video em `/app` e local do navegador, nao servidor
-- a suite automatizada cobre o backend; o frontend ainda nao tem suite dedicada
+- o preview do video em `/app` é local do navegador, nao servidor
+- a suite automatizada cobre o backend; o frontend ainda nao tem suite dedicada de DOM/browser
 
 ## Roadmap curto
 
-- adicionar testes de frontend com Vitest + React Testing Library
+- adicionar testes de navegador para o frontend em JavaScript puro
 - adicionar colecoes TTL/observabilidade mais avancadas no MongoDB
 - adicionar storage S3-compatible para anexos e artefatos futuros
 - expandir observabilidade com metricas e alertas de uso por usuario
@@ -216,7 +202,7 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 Existe pipeline simples em GitHub Actions para:
 
 - rodar `pytest`
-- validar o build do frontend
+- validar a integridade do backend Flask
 
 Arquivo: `.github/workflows/ci.yml`
 

@@ -8,7 +8,7 @@ on:
   pull_request:
 
 jobs:
-  test-and-build:
+  test-backend:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,21 +25,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run backend tests
-        run: pytest
+      - name: Validate backend syntax
+        run: python -m py_compile app.py
         env:
           SECRET_KEY: ci-placeholder-secret
           KEY_ENCRYPTION_MASTER_KEY: 3XN2eTRHdkxUOG5tNl85MjlWVVgwOF9ldWhsdkh3cTgtbE1WbnFaNzBNaz0=
+          MONGODB_URI: mongodb://localhost:27017/ci
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci
-
-      - name: Build frontend
-        run: npm --prefix frontend run build
+      - name: Run backend tests
+        run: python -m pytest
+        env:
+          SECRET_KEY: ci-placeholder-secret
+          KEY_ENCRYPTION_MASTER_KEY: 3XN2eTRHdkxUOG5tNl85MjlWVVgwOF9ldWhsdkh3cTgtbE1WbnFaNzBNaz0=
+          MONGODB_URI: mongodb://localhost:27017/ci

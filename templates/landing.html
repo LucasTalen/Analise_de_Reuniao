@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}Análise de Reunião | Portfolio{% endblock %}
+{% block page_name %}landing{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="bg-shape bg-shape-a"></div>
+  <div class="bg-shape bg-shape-b"></div>
+
+  <header class="hero hero-landing">
+    <div class="hero-landing-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">Projeto autoral • gratuito • portfolio técnico</p>
+        <h1>Transformo vídeos de reunião em decisões, tarefas e follow-up com IA.</h1>
+        <p class="subtitle hero-subtitle-strong">
+          Esta aplicação existe para mostrar minhas habilidades em produto, arquitetura backend,
+          integração segura com OpenAI e experiência de uso. O usuário entra com a própria chave,
+          o backend protege o segredo e o vídeo já dispara a análise automaticamente.
+        </p>
+        <div class="hero-actions">
+          <a class="btn" href="{{ url_for('application_page') }}">Abrir aplicação</a>
+          <a class="btn btn-ghost hero-btn-alt" href="#project-panel">Ver arquitetura</a>
+        </div>
+        <div class="hero-badges">
+          <span class="hero-badge">100% gratuito</span>
+          <span class="hero-badge">BYOK seguro</span>
+          <span class="hero-badge">Upload → análise</span>
+          <span class="hero-badge">Projeto de portfólio</span>
+        </div>
+      </div>
+
+      <aside class="hero-showcase">
+        <div class="showcase-window">
+          <div class="showcase-topbar">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <p class="showcase-kicker">$ flask/run project</p>
+          <h2>Um build que combina segurança, IA aplicada e visão de produto.</h2>
+          <div class="showcase-grid">
+            <article class="showcase-line">
+              <p>Projeto</p>
+              <strong>Portfolio build / free access</strong>
+            </article>
+            <article class="showcase-line">
+              <p>Objetivo</p>
+              <strong>Mostrar engenharia backend aplicada</strong>
+            </article>
+            <article class="showcase-line">
+              <p>Segredo</p>
+              <strong>OpenAI protegida via backend proxy</strong>
+            </article>
+            <article class="showcase-line">
+              <p>Diferencial</p>
+              <strong>BYOK + análise automática de vídeo</strong>
+            </article>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="hero-metrics hero-metrics-wide hero-metrics-landing">
+      <article class="metric-card">
+        <p>Preço</p>
+        <strong>100% gratuito</strong>
+        <span>Projeto autoral criado para portfolio técnico.</span>
+      </article>
+      <article class="metric-card">
+        <p>Modelo</p>
+        <strong>BYOK seguro</strong>
+        <span>Cada usuário conecta a própria chave OpenAI.</span>
+      </article>
+      <article class="metric-card">
+        <p>Fluxo</p>
+        <strong>Upload → análise</strong>
+        <span>A IA começa automaticamente após o envio.</span>
+      </article>
+      <article class="metric-card">
+        <p>Foco</p>
+        <strong>Engenharia real</strong>
+        <span>Auth, criptografia, proxy, uso e governança.</span>
+      </article>
+    </div>
+
+    <div class="creator-links">
+      <a class="creator-link-card" href="https://github.com/LucasTalen" target="_blank" rel="noreferrer">
+        <p>GitHub</p>
+        <strong>Perfil principal</strong>
+      </a>
+      <a class="creator-link-card" href="https://www.linkedin.com/in/lucas-de-paula-soares/" target="_blank" rel="noreferrer">
+        <p>LinkedIn</p>
+        <strong>Perfil profissional</strong>
+      </a>
+      <a class="creator-link-card" href="https://github.com/LucasTalen?tab=repositories" target="_blank" rel="noreferrer">
+        <p>Portfólio</p>
+        <strong>Vitrine de projetos</strong>
+      </a>
+      <a class="creator-link-card" href="https://github.com/LucasTalen/Analise_de_Reuniao" target="_blank" rel="noreferrer">
+        <p>Repositório</p>
+        <strong>Código deste projeto</strong>
+      </a>
+    </div>
+
+    <div class="flow-steps">
+      <span class="flow-step">1. Crie sua conta</span>
+      <span class="flow-step">2. Conecte sua chave OpenAI</span>
+      <span class="flow-step">3. Envie um vídeo</span>
+      <span class="flow-step">4. Receba insights automáticos</span>
+      <span class="flow-step">5. Continue no assistente</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel-upload">
+      <div class="launch-card">
+        <p class="account-title">Execução do produto</p>
+        <h2>Agora tudo roda dentro do Flask</h2>
+        <p class="panel-lead">
+          A landing está em <code>/</code> e a aplicação real em <code>/app</code>. Não existe mais
+          dependência de React/Vite para publicar ou rodar o projeto.
+        </p>
+        <div class="launch-points">
+          <span>Frontend em templates</span>
+          <span>JS estático</span>
+          <span>Deploy único</span>
+        </div>
+      </div>
+
+      <div class="account-box">
+        <p class="account-title">O que este projeto demonstra</p>
+        <p class="account-email">Produto, backend, segurança e experiência</p>
+        <p class="help-text">
+          Fluxo completo com autenticação, integração BYOK, upload transitório, análise automática,
+          follow-up contextual e trilha de uso.
+        </p>
+      </div>
+
+      <div class="hero-actions">
+        <a class="btn" href="{{ url_for('application_page') }}">Ir para /app</a>
+        <a class="btn btn-ghost hero-btn-alt" href="#project-panel">Ver detalhes</a>
+      </div>
+    </section>
+
+    <section class="panel panel-results" id="project-panel">
+      <div class="result-header">
+        <h2>Projeto em destaque</h2>
+        <p>
+          Mais do que uma interface bonita: este build foi pensado para mostrar arquitetura,
+          segurança, produto e execução ponta a ponta.
+        </p>
+      </div>
+
+      <div class="landing-content">
+        <section class="landing-section">
+          <div class="landing-proof-grid">
+            <article class="landing-proof-card">
+              <p>Produto</p>
+              <h3>Resolve um problema real</h3>
+              <span>Transforma reuniões longas em resumo executivo, decisões, tarefas e follow-up com contexto.</span>
+            </article>
+            <article class="landing-proof-card">
+              <p>Segurança</p>
+              <h3>Protege a integração com OpenAI</h3>
+              <span>A chave do usuário fica criptografada, mascarada na interface e nunca reaparece no front depois do cadastro.</span>
+            </article>
+            <article class="landing-proof-card">
+              <p>Operação</p>
+              <h3>Vai além de uma demo visual</h3>
+              <span>Inclui owner check, status de integração, dashboard de consumo, limites e mensagens claras de erro.</span>
+            </article>
+            <article class="landing-proof-card">
+              <p>Experiência</p>
+              <h3>Entrega um fluxo direto</h3>
+              <span>Conta, chave, upload e análise se conectam sem atrito, reduzindo cliques e fricção de uso.</span>
+            </article>
+          </div>
+        </section>
+
+        <section class="landing-section">
+          <div class="landing-section-head">
+            <p class="eyebrow">Capacidades demonstradas</p>
+            <h3>O que este projeto prova tecnicamente</h3>
+          </div>
+          <div class="landing-capability-grid">
+            <article class="landing-capability-card">
+              <h4>Backend de verdade</h4>
+              <p>Flask com autenticação, sessão assinada, processamento transitório de mídia, controle de acesso e integração BYOK.</p>
+            </article>
+            <article class="landing-capability-card">
+              <h4>Pipeline de mídia</h4>
+              <p>Upload validado, checagem de duração, divisão automática para transcrição e descarte do vídeo após o processamento.</p>
+            </article>
+            <article class="landing-capability-card">
+              <h4>Governança embutida</h4>
+              <p>Eventos de uso, consumo por usuário, rotação de chave e arquitetura pronta para evoluir com Redis e billing.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="landing-section">
+          <div class="landing-section-head">
+            <p class="eyebrow">Arquitetura</p>
+            <h3>Pipeline desenhado para uso real</h3>
+          </div>
+          <div class="landing-architecture-grid">
+            <article class="landing-architecture-card">
+              <strong>01</strong>
+              <h4>Conta e autenticação</h4>
+              <p>Cadastro com política de senha, hash com salt, token assinado e validação em todas as rotas críticas.</p>
+            </article>
+            <article class="landing-architecture-card">
+              <strong>02</strong>
+              <h4>OpenAI em modo BYOK</h4>
+              <p>A chave do usuário é validada, criptografada e resolvida no backend conforme o owner autenticado.</p>
+            </article>
+            <article class="landing-architecture-card">
+              <strong>03</strong>
+              <h4>Upload e preparação</h4>
+              <p>Cada arquivo é validado, processado temporariamente e particionado quando o provedor exige, sem retenção do vídeo no servidor.</p>
+            </article>
+            <article class="landing-architecture-card">
+              <strong>04</strong>
+              <h4>Resumo e follow-up</h4>
+              <p>A transcrição alimenta o insight inicial e sustenta perguntas adicionais sem reenviar o vídeo.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="landing-band">
+          <article class="landing-band-card">
+            <p class="eyebrow">Stack</p>
+            <h3>Ferramentas e decisões de implementação</h3>
+            <div class="tech-chips">
+              <span class="tech-chip">Flask</span>
+              <span class="tech-chip">Jinja templates</span>
+              <span class="tech-chip">Vanilla JS</span>
+              <span class="tech-chip">MongoDB</span>
+              <span class="tech-chip">Redis opcional</span>
+              <span class="tech-chip">FFmpeg</span>
+              <span class="tech-chip">OpenAI BYOK</span>
+              <span class="tech-chip">Fernet</span>
+              <span class="tech-chip">Rate limiting</span>
+            </div>
+          </article>
+
+          <article class="landing-band-card">
+            <p class="eyebrow">Saídas do produto</p>
+            <h3>O que o usuário recebe ao final</h3>
+            <div class="landing-output-list">
+              <span>Resumo executivo com timestamps</span>
+              <span>Checklist e lista de tarefas</span>
+              <span>Decisões e próximos passos</span>
+              <span>Follow-up contextual sem reprocesso</span>
+            </div>
+          </article>
+        </section>
+
+        <section class="landing-cta">
+          <p class="eyebrow">Experimente o projeto</p>
+          <h3>Crie uma conta e percorra o fluxo completo.</h3>
+          <p>
+            A aplicação é gratuita e foi pensada para servir como uma vitrine prática das minhas
+            habilidades técnicas.
+          </p>
+          <div class="hero-actions">
+            <a class="btn" href="{{ url_for('application_page') }}#auth-form">Abrir cadastro</a>
+            <a class="btn btn-ghost hero-btn-alt" href="{{ url_for('application_page') }}">Já tenho conta</a>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+{% endblock %}

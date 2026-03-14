@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Análise de Reunião{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+  </head>
+  <body data-page="{% block page_name %}base{% endblock %}">
+    {% block content %}{% endblock %}
+    {% block extra_scripts %}{% endblock %}
+  </body>
+</html>

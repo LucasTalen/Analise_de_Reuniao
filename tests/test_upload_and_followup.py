@@ -359,25 +359,13 @@ def test_usage_dashboard_validates_days_and_clamps_max(app_module, client, regis
     assert clamped_response.get_json()["range_days"] == 30
 
 
-def test_frontend_assets_return_expected_errors(app_module, client, tmp_path, monkeypatch):
-    disabled_response = client.get("/")
-    disabled_payload = disabled_response.get_json()
+def test_flask_serves_landing_and_app_templates(client):
+    landing_response = client.get("/")
+    app_response = client.get("/app")
+    method_not_allowed_response = client.get("/auth/register")
 
-    app_module.SERVE_FRONTEND_FROM_FLASK = True
-    monkeypatch.setattr(app_module, "FRONTEND_DIST", str(tmp_path / "missing-frontend-dist"))
-    missing_build_response = client.get("/")
-    api_path_response = client.get("/auth/register")
-
-    asset_dir = tmp_path / "frontend-dist"
-    asset_dir.mkdir()
-    (asset_dir / "index.html").write_text("<html>build ok</html>", encoding="utf-8")
-    monkeypatch.setattr(app_module, "FRONTEND_DIST", str(asset_dir))
-    served_response = client.get("/")
-
-    assert disabled_response.status_code == 404
-    assert disabled_payload["code"] == "frontend_disabled"
-    assert missing_build_response.status_code == 404
-    assert missing_build_response.get_json()["code"] == "frontend_build_missing"
-    assert api_path_response.status_code == 404
-    assert served_response.status_code == 200
-    assert b"build ok" in served_response.data
+    assert landing_response.status_code == 200
+    assert "Projeto autoral" in landing_response.get_data(as_text=True)
+    assert app_response.status_code == 200
+    assert "Análise de Vídeo com IA" in app_response.get_data(as_text=True)
+    assert method_not_allowed_response.status_code == 405

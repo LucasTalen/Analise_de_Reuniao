@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Análise de Reunião | Aplicação{% endblock %}
+{% block page_name %}app{% endblock %}
+
+{% block content %}
+<div class="app-shell" id="app-page">
+  <div class="bg-shape bg-shape-a"></div>
+  <div class="bg-shape bg-shape-b"></div>
+
+  <header class="hero">
+    <p class="eyebrow">Analise de Reuniao</p>
+    <h1>Análise de Vídeo com IA (BYOK)</h1>
+    <p class="subtitle">
+      Faça login, conecte sua chave OpenAI e analise reuniões sem expor segredos no front-end.
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-ghost hero-btn-alt" href="{{ url_for('landing_page') }}">Ver landing</a>
+    </div>
+    <div class="hero-metrics hero-metrics-wide">
+      <article class="metric-card">
+        <p>Conta</p>
+        <strong id="hero-account">Não autenticado</strong>
+      </article>
+      <article class="metric-card">
+        <p>Integração OpenAI</p>
+        <strong id="hero-key">Não configurada</strong>
+      </article>
+      <article class="metric-card">
+        <p>Arquivo</p>
+        <strong id="hero-file">Nenhum enviado</strong>
+      </article>
+      <article class="metric-card">
+        <p>Status</p>
+        <strong id="hero-status">Login pendente</strong>
+      </article>
+    </div>
+    <div class="flow-steps">
+      <span id="step-login" class="flow-step">1. Login</span>
+      <span id="step-key" class="flow-step">2. Chave OpenAI</span>
+      <span id="step-upload" class="flow-step">3. Upload</span>
+      <span id="step-analysis" class="flow-step">4. Análise</span>
+      <span id="step-chat" class="flow-step">5. Conversa contínua</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel-upload">
+      <div id="guest-section">
+        <div class="launch-card">
+          <p class="account-title">Teste o projeto em fluxo real</p>
+          <h2>Entre no app</h2>
+          <p class="panel-lead">
+            Aqui não tem tela estática de showcase. O objetivo é deixar você percorrer o produto
+            inteiro: conta, integração, upload, análise e follow-up.
+          </p>
+          <div class="launch-points">
+            <span>Gratuito para usar</span>
+            <span>Chave protegida no backend</span>
+            <span>Análise automática após upload</span>
+          </div>
+        </div>
+
+        <form id="auth-form" class="upload-form">
+          <label for="auth-email">Email</label>
+          <input id="auth-email" type="email" placeholder="seu@email.com" required />
+
+          <label for="auth-password">Senha</label>
+          <input id="auth-password" type="password" placeholder="Mínimo 10 caracteres" required />
+
+          <div id="auth-password-confirm-group" hidden>
+            <label for="auth-password-confirm">Confirmar senha</label>
+            <input id="auth-password-confirm" type="password" placeholder="Repita a senha" />
+            <p id="password-policy-help" class="help-text">
+              Use no mínimo 10 caracteres com maiúscula, minúscula, número e símbolo.
+            </p>
+          </div>
+
+          <button id="auth-submit-btn" class="btn" type="submit">Entrar</button>
+          <button id="auth-toggle-btn" class="text-btn" type="button">Não tem conta? Criar agora</button>
+        </form>
+      </div>
+
+      <div id="user-section" hidden>
+        <h2>Conta e integração</h2>
+        <div class="account-box">
+          <p class="account-title">Usuário autenticado</p>
+          <p id="current-user-email" class="account-email"></p>
+          <button id="logout-btn" class="btn btn-ghost" type="button">Sair da conta</button>
+        </div>
+
+        <form id="api-key-form" class="upload-form integration-form">
+          <label for="openai-key">Minha chave OpenAI</label>
+          <input id="openai-key" type="password" placeholder="sk-..." />
+          <p id="api-key-help" class="help-text">Nenhuma chave ativa. Cadastre para liberar análise e follow-up.</p>
+          <div class="integration-actions">
+            <button id="save-api-key-btn" class="btn" type="submit">Salvar chave</button>
+            <button id="revoke-api-key-btn" class="btn btn-danger" type="button" hidden>Revogar chave</button>
+          </div>
+        </form>
+
+        <div class="usage-card">
+          <div class="usage-card-header">
+            <p class="account-title">Dashboard interno de consumo</p>
+            <div class="usage-controls">
+              <select id="usage-days-select">
+                <option value="7">7 dias</option>
+                <option value="30">30 dias</option>
+                <option value="90">90 dias</option>
+              </select>
+              <button id="usage-refresh-btn" class="btn btn-ghost btn-small" type="button">Atualizar</button>
+            </div>
+          </div>
+
+          <div id="usage-summary-grid" class="usage-summary-grid" hidden>
+            <article class="usage-mini">
+              <p>Requests</p>
+              <strong id="usage-requests">0</strong>
+            </article>
+            <article class="usage-mini">
+              <p>Input tokens</p>
+              <strong id="usage-input-tokens">0</strong>
+            </article>
+            <article class="usage-mini">
+              <p>Output tokens</p>
+              <strong id="usage-output-tokens">0</strong>
+            </article>
+            <article class="usage-mini">
+              <p>Custo estimado</p>
+              <strong id="usage-estimated-cost">US$ 0,00</strong>
+            </article>
+          </div>
+
+          <div class="usage-list">
+            <p>Top endpoints no período</p>
+            <div id="usage-by-endpoint"></div>
+          </div>
+
+          <div class="usage-list">
+            <p>Timeline recente</p>
+            <div id="usage-timeline"></div>
+          </div>
+
+          <p id="usage-empty" class="help-text">Nenhum evento de consumo registrado ainda.</p>
+        </div>
+
+        <div class="divider"></div>
+
+        <h2>Enviar e analisar</h2>
+        <form id="upload-form" class="upload-form">
+          <label for="video-file">Arquivo de vídeo</label>
+          <input id="video-file" type="file" accept=".mp4,.avi,.mov,.mkv" required />
+          <p id="upload-limit-help" class="help-text">
+            Limite atual de upload: 100MB por arquivo. O vídeo é processado temporariamente e não fica salvo no servidor.
+          </p>
+
+          <label for="question">Pergunta inicial (opcional)</label>
+          <input id="question" type="text" placeholder="Ex: Quais decisões foram tomadas?" />
+
+          <button id="upload-submit-btn" class="btn" type="submit">Enviar e analisar</button>
+        </form>
+      </div>
+
+      <div class="status-row">
+        <span id="status-dot" class="dot"></span>
+        <p id="progress-text">Aguardando envio...</p>
+      </div>
+      <div class="progress-track" aria-hidden="true">
+        <span id="progress-fill" class="progress-fill"></span>
+      </div>
+
+      <div id="video-card" class="video-card" hidden>
+        <p id="video-label" class="video-label">Preview local</p>
+        <video id="video-player" controls>
+          Seu navegador não suporta reprodução de vídeo.
+        </video>
+        <p id="video-help" class="help-text"></p>
+      </div>
+
+      <p id="error-box" class="error-box" hidden></p>
+    </section>
+
+    <section class="panel panel-results">
+      <div class="result-header">
+        <h2>Resultados e assistente</h2>
+        <p>Navegue pelos timestamps ou continue perguntando sem reprocessar o vídeo.</p>
+      </div>
+
+      <div id="empty-state" class="empty-state">
+        <h3>Faça login para começar</h3>
+        <p>1. Entre ou crie sua conta.</p>
+        <p>2. Cadastre sua chave OpenAI.</p>
+        <p>3. Envie um vídeo para análise.</p>
+      </div>
+
+      <div id="results-shell" hidden>
+        <div class="tabs">
+          <button class="tab tab-active" type="button" data-tab="assistant">Assistente (<span id="tab-assistant-count">0</span>)</button>
+          <button class="tab" type="button" data-tab="insights">Insights (<span id="tab-insights-count">0</span>)</button>
+          <button class="tab" type="button" data-tab="transcription">Transcrição (<span id="tab-transcription-count">0</span>)</button>
+        </div>
+
+        <div id="tab-panel-assistant" class="tab-panel">
+          <div class="assistant-shell">
+            <div class="assistant-toolbar">
+              <p>Ações rápidas</p>
+              <div id="quick-actions" class="quick-actions"></div>
+            </div>
+
+            <div id="chat-feed" class="chat-feed">
+              <p class="chat-placeholder">A primeira resposta aparecerá aqui após a análise.</p>
+            </div>
+
+            <form id="followup-form" class="followup-form">
+              <label for="followup-question">Nova pergunta ou comando</label>
+              <textarea
+                id="followup-question"
+                placeholder="Ex: Gere uma lista de tarefas com prioridade e prazo sugerido."
+                rows="3"
+              ></textarea>
+              <div class="followup-actions">
+                <p>Pressione Enter para enviar ou Shift+Enter para quebrar linha.</p>
+                <button id="followup-submit-btn" class="btn btn-send" type="submit">Perguntar ao assistente</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div id="tab-panel-insights" class="tab-panel" hidden>
+          <div class="content-card">
+            <p class="hint">Clique em um timestamp para pular para o trecho correspondente do vídeo.</p>
+            <div id="insights-content" class="text-flow"></div>
+          </div>
+        </div>
+
+        <div id="tab-panel-transcription" class="tab-panel" hidden>
+          <div id="transcription-content" class="content-card transcription-list"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endblock %}

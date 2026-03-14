@@ -25,6 +25,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -459,6 +463,9 @@ body::before {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 8px;
   border: 0;
   border-radius: 12px;
@@ -470,6 +477,7 @@ body::before {
   cursor: pointer;
   box-shadow: 0 10px 20px rgba(9, 82, 97, 0.24);
   transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+  text-decoration: none;
 }
 
 .btn:hover:enabled {

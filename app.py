@@ -18,7 +18,7 @@ import redis
 import requests
 from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, render_template, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.errors import DuplicateKeyError
@@ -113,7 +113,6 @@ def resolve_mongodb_db_name():
 
 
 MONGODB_DB_NAME = resolve_mongodb_db_name()
-FRONTEND_DIST = os.path.join(app.root_path, "frontend", "dist")
 
 DEFAULT_MAX_FILE_SIZE_MB = 100
 DEFAULT_MAX_VIDEO_DURATION_SECONDS = 7200
@@ -163,7 +162,6 @@ REDIS_PREFIX = os.getenv("REDIS_PREFIX", "meeting_analysis")
 INTERNAL_ADMIN_KEY = os.getenv("INTERNAL_ADMIN_KEY", "").strip()
 USAGE_DASHBOARD_DEFAULT_DAYS = env_int("USAGE_DASHBOARD_DEFAULT_DAYS", 7)
 USAGE_DASHBOARD_MAX_DAYS = env_int("USAGE_DASHBOARD_MAX_DAYS", 90)
-SERVE_FRONTEND_FROM_FLASK = parse_bool(os.getenv("SERVE_FRONTEND_FROM_FLASK", "0"))
 
 
 def current_max_file_size_mb():
@@ -1050,13 +1048,6 @@ def json_success(payload):
     return jsonify(data)
 
 
-def is_api_like_path(path):
-    normalized = f"/{str(path or '').lstrip('/')}"
-    return normalized in {"/upload", "/followup"} or normalized.startswith(
-        ("/auth/", "/integrations/", "/usage/", "/health")
-    )
-
-
 def parse_dashboard_days(raw_value):
     try:
         value = int(str(raw_value or USAGE_DASHBOARD_DEFAULT_DAYS).strip())
@@ -1333,7 +1324,7 @@ def health_check():
         "status": "ok" if db_ok else "degraded",
         "max_file_size_mb": max_file_size_mb,
         "max_video_duration_seconds": max_video_duration_seconds,
-        "serve_frontend_from_flask": SERVE_FRONTEND_FROM_FLASK,
+        "frontend_mode": "flask_templates",
         "services": {
             "database": "ok" if db_ok else "error",
             "redis": "ok" if redis_ok else "disabled_or_unavailable"
@@ -1564,32 +1555,15 @@ def usage_dashboard():
     return json_success(response_payload)
 
 
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def frontend_assets(path):
-    if not SERVE_FRONTEND_FROM_FLASK:
-        return error_response(
-            404,
-            "Frontend no Flask desativado. Em desenvolvimento, use http://localhost:5173.",
-            "frontend_disabled"
-        )
+@app.route("/", methods=["GET"])
+def landing_page():
+    return render_template("landing.html")
 
-    if path and is_api_like_path(path):
-        raise ApiError(404, "Recurso nao encontrado.", "not_found")
 
-    target = os.path.join(FRONTEND_DIST, path)
-    if path and os.path.exists(target):
-        return send_from_directory(FRONTEND_DIST, path)
-
-    index_path = os.path.join(FRONTEND_DIST, "index.html")
-    if os.path.exists(index_path):
-        return send_from_directory(FRONTEND_DIST, "index.html")
-
-    return error_response(
-        404,
-        'Frontend build nao encontrado. Rode "npm run build" em frontend/.',
-        "frontend_build_missing"
-    )
+@app.route("/app", methods=["GET"])
+@app.route("/app/", methods=["GET"])
+def application_page():
+    return render_template("app.html")
 
 
 @app.errorhandler(ApiError)

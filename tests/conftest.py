@@ -24,7 +24,6 @@ def app_module(tmp_path, monkeypatch):
     monkeypatch.setenv("KEY_ENCRYPTION_MASTER_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
     monkeypatch.setenv("MONGODB_DB_NAME", f"test_db_{uuid_suffix(tmp_path)}")
-    monkeypatch.setenv("SERVE_FRONTEND_FROM_FLASK", "0")
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setenv("PASSWORD_PEPPER", "pepper-for-tests")
     monkeypatch.setenv("RATE_LIMIT_UPLOAD_PER_MIN", "50")
