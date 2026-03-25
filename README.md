@@ -11,14 +11,14 @@ Principais recursos:
 - autenticacao com hash de senha, salt e politica minima
 - integracao OpenAI em modo BYOK
 - upload, transcricao, analise inicial e follow-up
-- persistencia em MongoDB com trilha de uso
+- persistencia em SQLite (`.db`) com trilha de uso
 - testes automatizados cobrindo o backend
 
 ## Stack
 
 - Backend: Flask
 - Frontend: Jinja templates + JavaScript estatico
-- Banco: MongoDB
+- Banco: SQLite (arquivo `.db`)
 - Cache opcional: Redis
 - Video/transcricao: `ffmpeg` + OpenAI
 
@@ -42,7 +42,7 @@ Fluxo de deploy:
 
 - Python 3.11+ ou compativel com as dependencias do projeto
 - `ffmpeg` e `ffprobe` instalados e disponiveis no `PATH`
-- MongoDB acessivel pela `MONGODB_URI`
+- SQLite local (arquivo `.db`) acessivel pelo caminho configurado
 - Redis opcional
 
 ## Configuracao do ambiente
@@ -63,7 +63,7 @@ Copy-Item .env.example .env
 
 - `SECRET_KEY`
 - `KEY_ENCRYPTION_MASTER_KEY`
-- `MONGODB_URI`
+- `SQLITE_DB_PATH`
 - `MAX_FILE_SIZE_MB`
 
 Se quiser separar segredos locais sem mexer no `.env`, voce tambem pode criar `.env.local`. O backend carrega `.env` primeiro e depois `.env.local`, sobrescrevendo o que estiver duplicado.
@@ -77,11 +77,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 Exemplo de `.env.local`:
 
 ```env
-MONGODB_URI="mongodb+srv://usuario:senha@cluster.mongodb.net/?retryWrites=true&w=majority"
-MONGODB_DB_NAME=analise_reuniao
+SQLITE_DB_PATH="app.db"
 ```
-
-Se a URI nao trouxer o nome do banco no path, o app usa `analise_reuniao` por padrao.
+Se nao definir `SQLITE_DB_PATH`, o app usa `app.db` na raiz do projeto.
 
 ## Como rodar
 
@@ -168,7 +166,7 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 
 - nunca commite `.env`, `.env.local`, chaves reais da OpenAI ou segredos de deploy
 - use sempre `.env.example` como template
-- rotacione `SECRET_KEY`, `KEY_ENCRYPTION_MASTER_KEY`, `MONGODB_URI` e chaves OpenAI se houver exposicao
+- rotacione `SECRET_KEY`, `KEY_ENCRYPTION_MASTER_KEY`, `SQLITE_DB_PATH` e chaves OpenAI se houver exposicao
 - em producao, prefira armazenar segredos no painel do provedor e nao no repositorio
 - o frontend nao deve exibir a chave completa depois do cadastro
 
@@ -182,7 +180,7 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 ## Limitacoes conhecidas
 
 - depende de `ffmpeg` e `ffprobe` instalados no ambiente
-- depende de um MongoDB acessivel pela `MONGODB_URI`
+- depende de um arquivo SQLite configurado em `SQLITE_DB_PATH` (padrao: `app.db`)
 - Redis e opcional; sem ele, parte do comportamento usa fallback local em memoria
 - o preview do video em `/app` é local do navegador, nao servidor
 - a suite automatizada cobre o backend; o frontend ainda nao tem suite dedicada de DOM/browser
@@ -190,7 +188,7 @@ O `pytest.ini` ja esta configurado para gerar cobertura sobre `app.py` com `term
 ## Roadmap curto
 
 - adicionar testes de navegador para o frontend em JavaScript puro
-- adicionar colecoes TTL/observabilidade mais avancadas no MongoDB
+- adicionar rotinas TTL/observabilidade mais avancadas no SQLite
 - adicionar storage S3-compatible para anexos e artefatos futuros
 - expandir observabilidade com metricas e alertas de uso por usuario
 

@@ -5,13 +5,13 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
 import uuid
 from collections import defaultdict
 from functools import wraps
-from urllib.parse import urlparse
 
 import ffmpeg
 import redis
@@ -20,8 +20,6 @@ from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from pymongo import ASCENDING, DESCENDING, MongoClient
-from pymongo.errors import DuplicateKeyError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -45,6 +43,10 @@ class ApiError(Exception):
         self.status_code = status_code
         self.message = message
         self.code = code
+
+
+class DuplicateKeyError(Exception):
+    pass
 
 
 def parse_bool(value):
@@ -90,29 +92,16 @@ def require_env(name):
     return value
 
 
+ASCENDING = 1
+DESCENDING = -1
+
 app = Flask(__name__)
 
 SECRET_KEY = require_env("SECRET_KEY")
 app.secret_key = SECRET_KEY
 
-MONGODB_URI = require_env("MONGODB_URI")
-MONGODB_SERVER_SELECTION_TIMEOUT_MS = env_int("MONGODB_SERVER_SELECTION_TIMEOUT_MS", 10000)
-
-
-def resolve_mongodb_db_name():
-    configured_name = os.getenv("MONGODB_DB_NAME", "").strip()
-    if configured_name:
-        return configured_name
-
-    parsed = urlparse(MONGODB_URI)
-    path_name = parsed.path.lstrip("/").strip()
-    if path_name:
-        return path_name
-
-    return "analise_reuniao"
-
-
-MONGODB_DB_NAME = resolve_mongodb_db_name()
+_sqlite_path = os.getenv("SQLITE_DB_PATH", "").strip()
+SQLITE_DB_PATH = _sqlite_path or os.path.join(BASE_DIR, "app.db")
 
 DEFAULT_MAX_FILE_SIZE_MB = 100
 DEFAULT_MAX_VIDEO_DURATION_SECONDS = 7200
@@ -229,15 +218,230 @@ def build_redis_client():
 REDIS_CLIENT = build_redis_client()
 
 
-def build_mongo_client():
-    return MongoClient(
-        MONGODB_URI,
-        serverSelectionTimeoutMS=MONGODB_SERVER_SELECTION_TIMEOUT_MS,
-    )
+def _normalize_bool(value):
+    if isinstance(value, bool):
+        return int(value)
+    return value
 
 
-MONGO_CLIENT = build_mongo_client()
-MONGO_DB = MONGO_CLIENT[MONGODB_DB_NAME]
+class SQLiteCursor:
+    def __init__(self, collection, filter_doc=None, projection=None, sort=None):
+        self.collection = collection
+        self.filter_doc = filter_doc or {}
+        self.projection = projection
+        self.sort_spec = list(sort or [])
+
+    def sort(self, key, direction=ASCENDING):
+        self.sort_spec = [(key, direction)]
+        return self
+
+    def __iter__(self):
+        return iter(
+            self.collection._query(
+                self.filter_doc,
+                self.projection,
+                sort=self.sort_spec,
+            )
+        )
+
+
+class SQLiteCollection:
+    SCHEMA_COLUMNS = {
+        "users": ["id", "email", "password_hash", "status", "created_at"],
+        "user_api_keys": [
+            "id",
+            "user_id",
+            "provider",
+            "key_ciphertext",
+            "key_last4",
+            "is_active",
+            "created_at",
+            "rotated_at",
+        ],
+        "analysis_sessions": [
+            "id",
+            "user_id",
+            "source_label",
+            "transcription_json",
+            "history_json",
+            "status",
+            "created_at",
+            "updated_at",
+            "expires_at",
+        ],
+        "usage_events": [
+            "id",
+            "user_id",
+            "session_id",
+            "endpoint",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "estimated_cost",
+            "http_status",
+            "created_at",
+        ],
+    }
+    JSON_FIELDS = {"analysis_sessions": {"transcription_json", "history_json"}}
+    AUTOINCREMENT_TABLES = {"users", "user_api_keys", "usage_events"}
+
+    def __init__(self, conn, name):
+        self.conn = conn
+        self.name = name
+        self.columns = self.SCHEMA_COLUMNS.get(name, [])
+
+    def create_index(self, *_args, **_kwargs):
+        return None
+
+    def insert_one(self, document):
+        if not document:
+            return None
+        payload = dict(document)
+        for key in self.JSON_FIELDS.get(self.name, set()):
+            if key in payload:
+                payload[key] = json.dumps(payload[key], ensure_ascii=False)
+        for key, value in payload.items():
+            payload[key] = _normalize_bool(value)
+
+        is_autoincrement = self.name in self.AUTOINCREMENT_TABLES
+        columns = [
+            key for key in payload.keys()
+            if key in self.columns and not (is_autoincrement and key == "id")
+        ]
+        values = [payload[col] for col in columns]
+        placeholders = ", ".join(["?"] * len(columns))
+        column_list = ", ".join(columns)
+        sql = f"INSERT INTO {self.name} ({column_list}) VALUES ({placeholders})"
+        try:
+            cursor = self.conn.execute(sql, values)
+            self.conn.commit()
+            if is_autoincrement:
+                return cursor.lastrowid
+        except sqlite3.IntegrityError as error:
+            raise DuplicateKeyError(str(error)) from error
+        return None
+
+    def find_one(self, filter_doc=None, projection=None, sort=None):
+        rows = self._query(filter_doc or {}, projection, sort=sort, limit=1)
+        return rows[0] if rows else None
+
+    def find(self, filter_doc=None, projection=None, sort=None):
+        return SQLiteCursor(self, filter_doc, projection, sort=sort)
+
+    def update_one(self, filter_doc, update_doc):
+        return self._update(filter_doc or {}, update_doc or {}, limit=1)
+
+    def update_many(self, filter_doc, update_doc):
+        return self._update(filter_doc or {}, update_doc or {}, limit=None)
+
+    def _update(self, filter_doc, update_doc, limit=None):
+        if not update_doc or "$set" not in update_doc:
+            return None
+        set_doc = dict(update_doc.get("$set") or {})
+        for key in self.JSON_FIELDS.get(self.name, set()):
+            if key in set_doc:
+                set_doc[key] = json.dumps(set_doc[key], ensure_ascii=False)
+        for key, value in set_doc.items():
+            set_doc[key] = _normalize_bool(value)
+
+        if limit == 1:
+            target = self.find_one(filter_doc, projection={"id": 1})
+            if not target:
+                return None
+            filter_doc = {"id": target["id"]}
+
+        set_clause = ", ".join([f"{key} = ?" for key in set_doc.keys()])
+        where_sql, where_params = self._build_where(filter_doc)
+        sql = f"UPDATE {self.name} SET {set_clause} {where_sql}"
+        params = list(set_doc.values()) + where_params
+        self.conn.execute(sql, params)
+        self.conn.commit()
+        return None
+
+    def _query(self, filter_doc, projection=None, sort=None, limit=None):
+        where_sql, where_params = self._build_where(filter_doc or {})
+        columns = self._select_columns(projection)
+        sql = f"SELECT {', '.join(columns)} FROM {self.name} {where_sql}"
+        if sort:
+            order_clause = []
+            for field, direction in sort:
+                if field not in self.columns:
+                    continue
+                order_clause.append(f"{field} {'DESC' if direction == DESCENDING else 'ASC'}")
+            if order_clause:
+                sql += " ORDER BY " + ", ".join(order_clause)
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        cursor = self.conn.execute(sql, where_params)
+        rows = cursor.fetchall()
+        return [self._row_to_doc(row, projection) for row in rows]
+
+    def _select_columns(self, projection):
+        if not projection:
+            return list(self.columns)
+
+        selected = [key for key, value in projection.items() if value and key in self.columns]
+        if "id" in self.columns and "id" not in selected:
+            selected.append("id")
+        return selected or list(self.columns)
+
+    def _build_where(self, filter_doc):
+        clauses = []
+        params = []
+        for key, value in (filter_doc or {}).items():
+            if key not in self.columns:
+                continue
+            if isinstance(value, dict):
+                if "$gte" in value:
+                    clauses.append(f"{key} >= ?")
+                    params.append(_normalize_bool(value["$gte"]))
+                if "$lte" in value:
+                    clauses.append(f"{key} <= ?")
+                    params.append(_normalize_bool(value["$lte"]))
+            else:
+                clauses.append(f"{key} = ?")
+                params.append(_normalize_bool(value))
+        if not clauses:
+            return "", []
+        return "WHERE " + " AND ".join(clauses), params
+
+    def _row_to_doc(self, row, projection):
+        if row is None:
+            return None
+        doc = dict(row)
+        for key in self.JSON_FIELDS.get(self.name, set()):
+            if key in doc and doc[key] is not None:
+                try:
+                    doc[key] = json.loads(doc[key])
+                except (TypeError, ValueError):
+                    doc[key] = []
+        return doc
+
+
+class SQLiteDatabase:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __getitem__(self, name):
+        return SQLiteCollection(self.conn, name)
+
+    def list_collection_names(self):
+        cursor = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        return [row[0] for row in cursor.fetchall()]
+
+
+def build_sqlite_connection():
+    if SQLITE_DB_PATH not in {":memory:", ""}:
+        db_dir = os.path.dirname(SQLITE_DB_PATH)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(SQLITE_DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+SQLITE_CONN = build_sqlite_connection()
+SQLITE_DB = SQLiteDatabase(SQLITE_CONN)
 
 
 def now_ts():
@@ -256,7 +460,7 @@ def refresh_runtime_limits():
 
 
 def get_db():
-    return MONGO_DB
+    return SQLITE_DB
 
 
 @app.teardown_appcontext
@@ -265,34 +469,100 @@ def close_db(_error):
 
 
 def init_db():
-    db = get_db()
-    db.users.create_index([("email", ASCENDING)], unique=True)
-    db.user_api_keys.create_index(
-        [("user_id", ASCENDING), ("provider", ASCENDING)],
-        unique=True,
-        partialFilterExpression={"is_active": True},
+    conn = SQLITE_CONN
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active'
+        )
+        """
     )
-    db.analysis_sessions.create_index(
-        [("user_id", ASCENDING), ("status", ASCENDING), ("updated_at", DESCENDING)]
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            key_ciphertext TEXT NOT NULL,
+            key_last4 TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            rotated_at INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
     )
-    db.analysis_sessions.create_index([("expires_at", ASCENDING)])
-    db.usage_events.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS analysis_sessions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            source_label TEXT NOT NULL,
+            transcription_json TEXT NOT NULL,
+            history_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            session_id TEXT,
+            endpoint TEXT NOT NULL,
+            model TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            estimated_cost REAL,
+            http_status INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(session_id) REFERENCES analysis_sessions(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_active ON user_api_keys (user_id, provider, is_active)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_analysis_sessions_user_status_updated "
+        "ON analysis_sessions (user_id, status, updated_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_analysis_sessions_expires ON analysis_sessions (expires_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_user_created ON usage_events (user_id, created_at DESC)"
+    )
+    conn.commit()
 
 
 def users_collection():
-    return get_db().users
+    return get_db()["users"]
 
 
 def user_api_keys_collection():
-    return get_db().user_api_keys
+    return get_db()["user_api_keys"]
 
 
 def analysis_sessions_collection():
-    return get_db().analysis_sessions
+    return get_db()["analysis_sessions"]
 
 
 def usage_events_collection():
-    return get_db().usage_events
+    return get_db()["usage_events"]
 
 
 def normalize_user_document(document):
@@ -300,7 +570,7 @@ def normalize_user_document(document):
         return None
 
     return {
-        "id": str(document["_id"]),
+        "id": str(document["id"]),
         "email": document["email"],
         "password_hash": document.get("password_hash"),
         "status": document.get("status", "active"),
@@ -313,7 +583,7 @@ def normalize_api_key_document(document):
         return None
 
     return {
-        "id": str(document["_id"]),
+        "id": str(document["id"]),
         "user_id": str(document["user_id"]),
         "provider": document["provider"],
         "key_ciphertext": document["key_ciphertext"],
@@ -409,7 +679,7 @@ def decode_auth_token(token):
 
 
 def get_user_by_id(user_id):
-    document = users_collection().find_one({"_id": str(user_id)})
+    document = users_collection().find_one({"id": int(user_id)})
     user = normalize_user_document(document)
     if user is None:
         return None
@@ -503,7 +773,7 @@ def set_active_openai_key_for_user(user_id, api_key):
     key_last4 = api_key[-4:]
     user_api_keys_collection().update_many(
         {
-            "user_id": str(user_id),
+            "user_id": int(user_id),
             "provider": "openai",
             "is_active": True,
         },
@@ -516,8 +786,7 @@ def set_active_openai_key_for_user(user_id, api_key):
     )
     user_api_keys_collection().insert_one(
         {
-            "_id": str(uuid.uuid4()),
-            "user_id": str(user_id),
+            "user_id": int(user_id),
             "provider": "openai",
             "key_ciphertext": ciphertext,
             "key_last4": key_last4,
@@ -532,7 +801,7 @@ def revoke_openai_key(user_id):
     current_time = now_ts()
     user_api_keys_collection().update_many(
         {
-            "user_id": str(user_id),
+            "user_id": int(user_id),
             "provider": "openai",
             "is_active": True,
         },
@@ -548,7 +817,7 @@ def revoke_openai_key(user_id):
 def get_active_openai_key_row(user_id):
     document = user_api_keys_collection().find_one(
         {
-            "user_id": str(user_id),
+            "user_id": int(user_id),
             "provider": "openai",
             "is_active": True,
         },
@@ -571,10 +840,10 @@ def cleanup_expired_analysis_sessions():
 
     if REDIS_CLIENT is not None:
         expired_ids = [
-            str(document["_id"])
+            str(document["id"])
             for document in sessions.find(
                 {"status": "active", "expires_at": {"$lte": current_time}},
-                {"_id": 1},
+                {"id": 1},
             )
         ]
 
@@ -596,11 +865,11 @@ def create_analysis_session(user_id, source_label, segments, history):
 
     analysis_sessions_collection().insert_one(
         {
-            "_id": analysis_id,
-            "user_id": str(user_id),
+            "id": analysis_id,
+            "user_id": int(user_id),
             "source_label": source_label,
-            "segments": segments,
-            "history": history,
+            "transcription_json": segments,
+            "history_json": history,
             "status": "active",
             "created_at": current_time,
             "updated_at": current_time,
@@ -635,8 +904,8 @@ def get_analysis_session(user_id, analysis_id):
 
     row = analysis_sessions_collection().find_one(
         {
-            "_id": analysis_id,
-            "user_id": str(user_id),
+            "id": analysis_id,
+            "user_id": int(user_id),
             "status": "active",
         }
     )
@@ -646,16 +915,16 @@ def get_analysis_session(user_id, analysis_id):
 
     current_time = now_ts()
     analysis_sessions_collection().update_one(
-        {"_id": analysis_id},
+        {"id": analysis_id},
         {"$set": {"updated_at": current_time}},
     )
 
     session = {
-        "id": str(row["_id"]),
+        "id": str(row["id"]),
         "user_id": str(row["user_id"]),
         "source_label": row["source_label"],
-        "segments": list(row.get("segments", [])),
-        "history": list(row.get("history", [])),
+        "segments": list(row.get("transcription_json", [])),
+        "history": list(row.get("history_json", [])),
         "expires_at": int(row["expires_at"]),
     }
     cache_analysis_session(session["id"], session, row["expires_at"])
@@ -665,10 +934,10 @@ def get_analysis_session(user_id, analysis_id):
 def update_analysis_history(analysis_id, history, expires_at):
     clipped_history = history[-(MAX_HISTORY_MESSAGES * 2):]
     analysis_sessions_collection().update_one(
-        {"_id": analysis_id},
+        {"id": analysis_id},
         {
             "$set": {
-                "history": clipped_history,
+                "history_json": clipped_history,
                 "updated_at": now_ts(),
             }
         },
@@ -702,8 +971,7 @@ def log_usage_event(user_id, session_id, endpoint, model, usage, http_status):
     estimated_cost = estimate_chat_cost(input_tokens, output_tokens)
     usage_events_collection().insert_one(
         {
-            "_id": str(uuid.uuid4()),
-            "user_id": str(user_id),
+            "user_id": int(user_id),
             "session_id": session_id,
             "endpoint": endpoint,
             "model": model,
@@ -1065,7 +1333,7 @@ def get_usage_summary_for_user(user_id, start_ts):
     docs = list(
         usage_events_collection().find(
             {
-                "user_id": str(user_id),
+                "user_id": int(user_id),
                 "created_at": {"$gte": start_ts},
             }
         )
@@ -1167,7 +1435,7 @@ def get_usage_summary_for_user(user_id, start_ts):
 def get_global_usage_top_users(start_ts, limit):
     docs = list(usage_events_collection().find({"created_at": {"$gte": start_ts}}))
     users_map = {
-        str(document["_id"]): document.get("email", "")
+        str(document["id"]): document.get("email", "")
         for document in users_collection().find({}, {"email": 1})
     }
     grouped = defaultdict(
@@ -1223,10 +1491,8 @@ def auth_register():
     created_at = now_ts()
 
     try:
-        user_id = str(uuid.uuid4())
-        users_collection().insert_one(
+        user_id = users_collection().insert_one(
             {
-                "_id": user_id,
                 "email": email,
                 "password_hash": password_hash,
                 "created_at": created_at,
@@ -1236,11 +1502,11 @@ def auth_register():
     except DuplicateKeyError as error:
         raise ApiError(400, "Este email ja esta cadastrado.", "email_already_exists") from error
 
-    token = issue_auth_token(user_id, email)
+    token = issue_auth_token(str(user_id), email)
 
     return json_success({
         "token": token,
-        "user": {"id": user_id, "email": email}
+        "user": {"id": str(user_id), "email": email}
     })
 
 
@@ -1268,7 +1534,7 @@ def auth_login():
 
     if used_legacy_without_pepper or password_hash_needs_upgrade(user["password_hash"]):
         users_collection().update_one(
-            {"_id": user["id"]},
+            {"id": int(user["id"])},
             {"$set": {"password_hash": hash_password(password)}},
         )
 

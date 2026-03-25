@@ -219,14 +219,14 @@ def test_followup_updates_history_and_logs_usage(
         json={"analysis_id": analysis_id, "question": "Quais são os próximos passos?"},
     )
     followup_payload = followup_response.get_json()
-    session_row = collection("analysis_sessions").find_one({"_id": analysis_id})
+    session_row = collection("analysis_sessions").find_one({"id": analysis_id})
     usage_row = collection("usage_events").find_one({"session_id": analysis_id}, sort=[("created_at", -1)])
 
     assert followup_response.status_code == 200
     assert "Resposta para" in followup_payload["answer"]
     assert any(
         item["role"] == "user" and item["content"] == "Quais são os próximos passos?"
-        for item in session_row["history"]
+        for item in session_row["history_json"]
     )
     assert usage_row["endpoint"] == "/followup"
     assert usage_row["model"] == "gpt-followup"
@@ -365,7 +365,7 @@ def test_flask_serves_landing_and_app_templates(client):
     method_not_allowed_response = client.get("/auth/register")
 
     assert landing_response.status_code == 200
-    assert "Projeto autoral" in landing_response.get_data(as_text=True)
+    assert "Análise de Reunião" in landing_response.get_data(as_text=True)
     assert app_response.status_code == 200
     assert "Análise de Vídeo com IA" in app_response.get_data(as_text=True)
     assert method_not_allowed_response.status_code == 405

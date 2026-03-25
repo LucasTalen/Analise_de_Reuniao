@@ -4,8 +4,6 @@ import importlib
 import sys
 from pathlib import Path
 
-import mongomock
-import pymongo
 import pytest
 from cryptography.fernet import Fernet
 
@@ -19,11 +17,12 @@ def app_module(tmp_path, monkeypatch):
     import dotenv
 
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: True)
-    monkeypatch.setattr(pymongo, "MongoClient", mongomock.MongoClient)
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("KEY_ENCRYPTION_MASTER_KEY", Fernet.generate_key().decode())
-    monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
-    monkeypatch.setenv("MONGODB_DB_NAME", f"test_db_{uuid_suffix(tmp_path)}")
+    monkeypatch.setenv(
+        "SQLITE_DB_PATH",
+        str(tmp_path / f"test_db_{uuid_suffix(tmp_path)}.db"),
+    )
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setenv("PASSWORD_PEPPER", "pepper-for-tests")
     monkeypatch.setenv("RATE_LIMIT_UPLOAD_PER_MIN", "50")
@@ -44,7 +43,7 @@ def app_module(tmp_path, monkeypatch):
     yield module
 
     module.rate_limit_buckets.clear()
-    module.MONGO_CLIENT.close()
+    module.SQLITE_CONN.close()
     sys.modules.pop("app", None)
 
 

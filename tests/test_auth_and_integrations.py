@@ -50,7 +50,6 @@ def test_login_upgrades_legacy_hash_without_pepper(app_module, client, collectio
     with app_module.app.app_context():
         collection("users").insert_one(
             {
-                "_id": "legacy-user",
                 "email": "legacy@example.com",
                 "password_hash": legacy_hash,
                 "created_at": app_module.now_ts(),
