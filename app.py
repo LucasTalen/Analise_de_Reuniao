@@ -105,6 +105,7 @@ SQLITE_DB_PATH = _sqlite_path or os.path.join(BASE_DIR, "app.db")
 
 DEFAULT_MAX_FILE_SIZE_MB = 100
 DEFAULT_MAX_VIDEO_DURATION_SECONDS = 7200
+DEFAULT_TRANSCRIPTION_AUDIO_SPEED = 1.5
 TRANSIENT_ANALYSIS_VIDEO_PATH = "[transient-upload]"
 DEFAULT_ANALYSIS_PROMPT = (
     "Resuma os principais pontos da reuniao em bullets e destaque decisoes, riscos e proximos passos. "
@@ -114,6 +115,21 @@ OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB = min(
     env_int("OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB", 25),
     25
 )
+OPENAI_TRANSCRIPTION_AUDIO_SPEED = env_float(
+    "OPENAI_TRANSCRIPTION_AUDIO_SPEED",
+    DEFAULT_TRANSCRIPTION_AUDIO_SPEED
+)
+if OPENAI_TRANSCRIPTION_AUDIO_SPEED < 0.5 or OPENAI_TRANSCRIPTION_AUDIO_SPEED > 2.0:
+    app.logger.warning(
+        "OPENAI_TRANSCRIPTION_AUDIO_SPEED fora da faixa suportada (%s). Usando default=%s",
+        OPENAI_TRANSCRIPTION_AUDIO_SPEED,
+        DEFAULT_TRANSCRIPTION_AUDIO_SPEED
+    )
+    OPENAI_TRANSCRIPTION_AUDIO_SPEED = DEFAULT_TRANSCRIPTION_AUDIO_SPEED
+OPENAI_TRANSCRIPTION_AUDIO_BITRATE = (
+    os.getenv("OPENAI_TRANSCRIPTION_AUDIO_BITRATE", "32k").strip() or "32k"
+)
+OPENAI_TRANSCRIPTION_AUDIO_SAMPLE_RATE = env_int("OPENAI_TRANSCRIPTION_AUDIO_SAMPLE_RATE", 16000)
 MAX_HISTORY_MESSAGES = env_int("MAX_HISTORY_MESSAGES", 12)
 ANALYSIS_SESSION_TTL_SECONDS = env_int("ANALYSIS_SESSION_TTL_MINUTES", 180) * 60
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-nano")
@@ -1096,6 +1112,9 @@ def validate_uploaded_video(file_path):
     has_video_stream = any(stream.get("codec_type") == "video" for stream in streams)
     if not has_video_stream:
         raise ApiError(400, "Arquivo enviado nao possui stream de video.", "invalid_video_file")
+    has_audio_stream = any(stream.get("codec_type") == "audio" for stream in streams)
+    if not has_audio_stream:
+        raise ApiError(400, "Arquivo enviado nao possui stream de audio para transcricao.", "invalid_video_file")
 
     duration = float(probe.get("format", {}).get("duration") or 0)
     if duration <= 0:
@@ -1216,42 +1235,104 @@ def run_video_analysis(user_id, api_key, video_path, question="", session_source
     }
 
 
-def split_video_ffmpeg(input_path, max_size_mb=None):
+def get_media_duration_seconds(input_path):
+    try:
+        probe = ffmpeg.probe(input_path)
+    except ffmpeg.Error:
+        return 0.0
+
+    return float(probe.get("format", {}).get("duration") or 0)
+
+
+def build_transcription_audio(input_path):
+    root_path, _ = os.path.splitext(input_path)
+    output_path = f"{root_path}_transcription.mp3"
+
+    try:
+        audio_stream = (
+            ffmpeg
+            .input(input_path)
+            .audio
+            .filter("atempo", OPENAI_TRANSCRIPTION_AUDIO_SPEED)
+        )
+        (
+            ffmpeg
+            .output(
+                audio_stream,
+                output_path,
+                acodec="libmp3lame",
+                audio_bitrate=OPENAI_TRANSCRIPTION_AUDIO_BITRATE,
+                ac=1,
+                ar=OPENAI_TRANSCRIPTION_AUDIO_SAMPLE_RATE
+            )
+            .run(overwrite_output=True, quiet=True)
+        )
+    except ffmpeg.Error as error:
+        stderr = (error.stderr or b"").decode("utf-8", errors="ignore")
+        raise ApiError(
+            400,
+            f"Nao foi possivel preparar o audio para transcricao: {stderr[:180]}",
+            "audio_preparation_failed"
+        ) from error
+
+    return output_path
+
+
+def split_media_ffmpeg(input_path, max_size_mb=None):
     max_size_mb = max_size_mb or current_max_file_size_mb()
     file_size = os.path.getsize(input_path)
     max_size = max_size_mb * 1024 * 1024
+    duration = get_media_duration_seconds(input_path)
     if file_size <= max_size:
-        return [input_path]
+        return [{"path": input_path, "duration_seconds": duration}]
 
-    probe = ffmpeg.probe(input_path)
-    duration = float(probe["format"].get("duration") or 0)
     if duration <= 0:
-        return [input_path]
+        return [{"path": input_path, "duration_seconds": duration}]
 
     num_parts = max(1, math.ceil(file_size / max_size))
     part_duration = duration / num_parts
     part_paths = []
+    root_path, extension = os.path.splitext(input_path)
 
-    for index in range(num_parts):
-        start = index * part_duration
-        output_path = f"{input_path}_part{index + 1}.mp4"
-        (
-            ffmpeg
-            .input(input_path, ss=start, t=part_duration)
-            .output(output_path, c="copy")
-            .run(overwrite_output=True, quiet=True)
-        )
-        part_paths.append(output_path)
+    try:
+        for index in range(num_parts):
+            start = index * part_duration
+            current_part_duration = min(part_duration, max(duration - start, 0))
+            if current_part_duration <= 0:
+                break
 
-    return part_paths
+            output_path = f"{root_path}_part{index + 1}{extension}"
+            (
+                ffmpeg
+                .input(input_path, ss=start, t=current_part_duration)
+                .output(output_path, c="copy")
+                .run(overwrite_output=True, quiet=True)
+            )
+            part_paths.append({
+                "path": output_path,
+                "duration_seconds": current_part_duration
+            })
+    except ffmpeg.Error as error:
+        for part_spec in part_paths:
+            part_path = part_spec["path"]
+            if os.path.exists(part_path):
+                os.remove(part_path)
+        stderr = (error.stderr or b"").decode("utf-8", errors="ignore")
+        raise ApiError(
+            400,
+            f"Nao foi possivel dividir o audio para transcricao: {stderr[:180]}",
+            "audio_split_failed"
+        ) from error
+
+    return part_paths or [{"path": input_path, "duration_seconds": duration}]
 
 
-def transcribe_with_openai(api_key, video_path):
-    with open(video_path, "rb") as video_file:
+def transcribe_with_openai(api_key, media_path):
+    with open(media_path, "rb") as media_file:
         response = requests.post(
             f"{OPENAI_API_BASE}/audio/transcriptions",
             headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": video_file},
+            files={"file": media_file},
             data={
                 "model": OPENAI_TRANSCRIPTION_MODEL,
                 "response_format": "verbose_json"
@@ -1282,30 +1363,44 @@ def transcribe_with_openai(api_key, video_path):
 
 
 def transcribe_large_video(api_key, video_path):
-    part_paths = split_video_ffmpeg(
-        video_path,
-        max_size_mb=OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB
-    )
+    audio_path = build_transcription_audio(video_path)
+    part_specs = [{
+        "path": audio_path,
+        "duration_seconds": get_media_duration_seconds(audio_path)
+    }]
     all_segments = []
     time_offset = 0.0
 
     try:
-        for part_path in part_paths:
-            result = transcribe_with_openai(api_key, part_path)
+        part_specs = split_media_ffmpeg(
+            audio_path,
+            max_size_mb=OPENAI_TRANSCRIPTION_PROVIDER_MAX_FILE_SIZE_MB
+        )
+        for part_spec in part_specs:
+            result = transcribe_with_openai(api_key, part_spec["path"])
             segments = result.get("segments", [])
 
             for segment in segments:
                 segment_copy = dict(segment)
-                segment_copy["start"] = float(segment_copy.get("start", 0)) + time_offset
-                segment_copy["end"] = float(segment_copy.get("end", 0)) + time_offset
+                # Ajusta o tempo do audio acelerado de volta para a linha do tempo do video original.
+                segment_copy["start"] = (
+                    float(segment_copy.get("start", 0)) * OPENAI_TRANSCRIPTION_AUDIO_SPEED
+                ) + time_offset
+                segment_copy["end"] = (
+                    float(segment_copy.get("end", 0)) * OPENAI_TRANSCRIPTION_AUDIO_SPEED
+                ) + time_offset
                 all_segments.append(segment_copy)
 
-            if segments:
-                time_offset = float(all_segments[-1].get("end", time_offset))
+            time_offset += (
+                float(part_spec.get("duration_seconds") or 0) * OPENAI_TRANSCRIPTION_AUDIO_SPEED
+            )
     finally:
-        for part_path in part_paths:
-            if part_path != video_path and os.path.exists(part_path):
+        for part_spec in part_specs:
+            part_path = part_spec["path"]
+            if part_path != audio_path and os.path.exists(part_path):
                 os.remove(part_path)
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
 
     return all_segments
 
